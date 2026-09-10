@@ -78,8 +78,20 @@ with their own migrations; no table is ever modified destructively without a mig
 ```
 users ─┬─ organization_members ─── organizations ─┬─ workspaces ─┬─ workspace_members
        └─ refresh_tokens                           │              └─ projects ─── project_rules
-                                                   └─ audit_logs
+                                                   ├─ audit_logs
+                                                   ├─ ai_providers ─── provider_models        (secret_refs hold the key)
+                                                   ├─ tools ─┬─ tool_versions (active_version_id)
+                                                   │         └─ tool_permissions
+                                                   ├─ skills ─── skill_versions (active_version_id) ─── skill_files
+                                                   └─ agents ─── agent_versions (active_version_id) ─┬─ agent_skill_bindings
+                                                                                                     ├─ agent_tool_bindings
+                                                                                                     └─ agent_handoffs
 ```
+
+Versioning rule (Phase 2): an entity row holds identity + `active_version_id`; version rows are
+immutable once `published_at` is set; at most one unpublished draft exists per entity; publish
+switches the pointer, rollback points it at an older published version. Bindings hang off the
+agent *version*, so a run can always be reproduced with the exact configuration it used.
 
 Conventions (`app/db/base.py`): UUID primary keys, `created_at/updated_at` in UTC,
 `created_by/updated_by` on admin-editable entities, soft-delete via `status`/`archived_at`

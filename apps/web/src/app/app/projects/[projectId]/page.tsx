@@ -8,13 +8,16 @@ import { Button } from "@/components/ui/Button";
 import { Badge, Card, CardTitle, EmptyState, ErrorText } from "@/components/ui/Card";
 import { Field, Input, Textarea } from "@/components/ui/Input";
 import { ApiError } from "@/lib/api/client";
+import { commandsApi } from "@/lib/api/admin";
 import { projectsApi } from "@/lib/api/workspaces";
+import type { CommandOut } from "@/types/admin";
 import type { ProjectOut, ProjectRuleOut } from "@/types/api";
 
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [project, setProject] = useState<ProjectOut | null>(null);
   const [rules, setRules] = useState<ProjectRuleOut[]>([]);
+  const [commands, setCommands] = useState<CommandOut[]>([]);
   const [summary, setSummary] = useState("");
   const [ruleName, setRuleName] = useState("");
   const [ruleText, setRuleText] = useState("");
@@ -38,6 +41,7 @@ export default function ProjectPage() {
 
   useEffect(() => {
     void load();
+    commandsApi.list().then(setCommands).catch(() => setCommands([]));
   }, [load]);
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -67,6 +71,18 @@ export default function ProjectPage() {
               title="Conversations arrive in Phase 3"
               body="This project will host a single chat where /master, /resize, /editable, /qc and other agents run with live execution status."
             />
+            <div className="mt-3">
+              <p className="mb-1 text-xs font-medium text-muted">Available commands (live from admin configuration)</p>
+              {commands.length === 0 ? <p className="text-xs text-muted">No active agents yet.</p> : (
+                <ul className="flex flex-wrap gap-2">
+                  {commands.map((c) => (
+                    <li key={c.agent_id} className="rounded-md border border-border px-2 py-1 text-xs" title={c.description}>
+                      <span className="font-mono text-accent">{c.command}</span> {c.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </Card>
           <Card>
             <CardTitle>Project summary</CardTitle>

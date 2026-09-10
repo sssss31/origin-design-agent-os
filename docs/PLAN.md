@@ -64,7 +64,7 @@ origin-design-agent-os/
 Each phase ends with: formatters + type check + migrations from empty DB + tests, then a
 completion report using the spec §23 template (saved under `docs/reports/`).
 
-### Phase 1 — Foundation (this delivery)
+### Phase 1 — Foundation (COMPLETE — see `docs/reports/phase-1.md`)
 Scope (spec §16 P1, §2, §6 env, §10 identity/workspace/governance, §17):
 - Monorepo, `apps/api` (FastAPI) and `apps/web` (Next.js), `infra/docker-compose.yml` with Postgres (pgvector image), Redis, MinIO.
 - Settings layer (`core/config.py`) with profiles `development|test|staging|production`, fail-fast validation in production (no default secrets).
@@ -77,7 +77,7 @@ Scope (spec §16 P1, §2, §6 env, §10 identity/workspace/governance, §17):
 - Tests: unit (config, security, state machines, slash parser, adapters), API (auth, tenant isolation/IDOR, workspace/project flows), DB (migrate from empty, downgrade/upgrade).
 - Acceptance: user logs in, creates workspace/project, backend tests pass, migrations run from an empty database.
 
-### Phase 2 — Admin configuration core
+### Phase 2 — Admin configuration core (COMPLETE — see `docs/reports/phase-2.md`)
 Scope (spec §4, §5, §6, §16 P2): tables + services for `ai_providers`, `provider_models`, `secret_refs`, `agents`, `agent_versions`, `agent_skill_bindings`, `agent_tool_bindings`, `agent_handoffs`, `skills`, `skill_versions`, `skill_files`, `tools`, `tool_versions`, `tool_permissions`. Draft/publish/rollback (`active_version_id` atomic switch), provider secret write-only endpoint + `test` (minimal authenticated request), model allowlist, audit on every publish/secret/permission change. Admin UI pages: Agents, Skills, Providers, Tools.
 Acceptance: admin adds OpenAI key, creates skill, creates agent, attaches skill/tool, publishes, and the `/command` appears in the composer without redeploy.
 

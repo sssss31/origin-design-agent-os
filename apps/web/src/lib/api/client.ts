@@ -62,6 +62,9 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   const { method = "GET", body, auth = true, organizationId, retryOn401 = true } = options;
   const headers: Record<string, string> = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  // After a reload only the refresh token survives: obtain an access token first instead of
+  // sending a request that is guaranteed to fail with 401.
+  if (auth && !tokenStore.getAccessToken() && tokenStore.getRefreshToken()) await tryRefresh();
   if (auth) {
     const token = tokenStore.getAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;

@@ -25,6 +25,7 @@ export function WorkspaceSidebar() {
     const active = exact ? pathname === href : pathname.startsWith(href);
     return (
       <Link
+        key={href}
         href={href}
         className={`block rounded-md px-2 py-1.5 text-sm ${active ? "bg-accent/15 text-accent" : "text-text hover:bg-surface-2"}`}
       >
