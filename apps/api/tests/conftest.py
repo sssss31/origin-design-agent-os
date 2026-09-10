@@ -137,6 +137,12 @@ class Actor:
     async def patch(self, url: str, **kw):  # type: ignore[no-untyped-def]
         return await self.client.patch(url, headers=self.headers, **kw)
 
+    async def put(self, url: str, **kw):  # type: ignore[no-untyped-def]
+        return await self.client.put(url, headers=self.headers, **kw)
+
+    async def delete(self, url: str, **kw):  # type: ignore[no-untyped-def]
+        return await self.client.delete(url, headers=self.headers, **kw)
+
 
 @pytest.fixture
 async def make_user(app, client):  # type: ignore[no-untyped-def]

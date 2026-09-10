@@ -1,0 +1,424 @@
+"""Admin configuration schemas (providers, tools, skills, agents). Secrets are write-only."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+from app.domain.slash import is_valid_command, normalize_command
+from app.schemas.common import ORMModel
+
+Slug = Field(default=None, pattern=r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$", max_length=80)
+Status = Literal["draft", "active", "disabled"]
+
+
+# ----------------------------------------------------------------------------- providers
+class ProviderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    slug: str | None = Slug
+    type: Literal["openai", "echo"] = "openai"
+    base_url: str | None = Field(default=None, max_length=300)
+    default_model: str | None = Field(default=None, max_length=120)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    rate_limit_policy: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class ProviderUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    base_url: str | None = Field(default=None, max_length=300)
+    default_model: str | None = Field(default=None, max_length=120)
+    metadata_json: dict[str, Any] | None = None
+    rate_limit_policy: dict[str, Any] | None = None
+    enabled: bool | None = None
+
+
+class ProviderSecretIn(BaseModel):
+    """Write-only. The value is stored through SecretStore and never returned."""
+
+    api_key: str = Field(min_length=8, max_length=4096)
+
+
+class ProviderModelIn(BaseModel):
+    model: str = Field(min_length=1, max_length=120)
+    display_name: str | None = Field(default=None, max_length=160)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class ProviderModelsSet(BaseModel):
+    models: list[ProviderModelIn]
+    default_model: str | None = None
+
+
+class ProviderModelOut(ORMModel):
+    id: uuid.UUID
+    model: str
+    display_name: str | None
+    capabilities: dict[str, Any]
+    enabled: bool
+
+
+class ProviderOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    name: str
+    slug: str
+    type: str
+    base_url: str | None
+    has_secret: bool
+    secret_fingerprint: str | None
+    metadata_json: dict[str, Any]
+    enabled: bool
+    default_model: str | None
+    rate_limit_policy: dict[str, Any]
+    health_status: str
+    health_message: str | None
+    last_tested_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    models: list[ProviderModelOut] = Field(default_factory=list)
+
+
+class ProviderTestOut(BaseModel):
+    ok: bool
+    message: str
+    latency_ms: int
+    available_models: list[str] = Field(default_factory=list)
+    tested_at: datetime
+
+
+# ----------------------------------------------------------------------------- tools
+ExecutorType = Literal["internal_function", "http_api", "mcp", "sandbox"]
+
+
+class ToolCreate(BaseModel):
+    slug: str = Field(pattern=r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$", max_length=80)
+    display_name: str = Field(min_length=1, max_length=160)
+    description: str = ""
+    executor_type: ExecutorType = "http_api"
+    input_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    output_schema: dict[str, Any] | None = None
+    config: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: int = Field(default=60, ge=1, le=3600)
+    status: Literal["active", "disabled"] = "active"
+
+
+class ToolUpdate(BaseModel):
+    """Any schema/config change creates a new tool version; metadata changes do not."""
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+    status: Literal["active", "disabled"] | None = None
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+    config: dict[str, Any] | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1, le=3600)
+    change_note: str | None = None
+
+
+class ToolSecretIn(BaseModel):
+    secret: str = Field(min_length=1, max_length=4096)
+
+
+class ToolPermissionIn(BaseModel):
+    subject_type: Literal["role", "workspace"]
+    subject_key: str = Field(min_length=1, max_length=64)
+    allowed: bool = True
+    limits_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolPermissionOut(ORMModel):
+    id: uuid.UUID
+    subject_type: str
+    subject_key: str
+    allowed: bool
+    limits_json: dict[str, Any]
+
+
+class ToolVersionOut(ORMModel):
+    id: uuid.UUID
+    version: int
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any] | None
+    config: dict[str, Any]
+    timeout_seconds: int
+    has_secret: bool
+    published_at: datetime | None
+    change_note: str | None
+    created_at: datetime
+
+
+class ToolOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    slug: str
+    display_name: str
+    description: str
+    executor_type: str
+    status: str
+    is_builtin: bool
+    active_version_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+    active_version: ToolVersionOut | None = None
+    permissions: list[ToolPermissionOut] = Field(default_factory=list)
+
+
+# ----------------------------------------------------------------------------- skills
+class SkillVersionInput(BaseModel):
+    instructions: str | None = None
+    variables_schema: dict[str, Any] | None = None
+    variables_defaults: dict[str, Any] | None = None
+    tool_requirements: list[str] | None = None
+    default_priority: int | None = Field(default=None, ge=0, le=10000)
+    change_note: str | None = None
+
+
+class SkillCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    slug: str | None = Slug
+    description: str = ""
+    scope: Literal["global", "organization", "workspace"] = "organization"
+    workspace_id: uuid.UUID | None = None
+    version: SkillVersionInput = Field(default_factory=SkillVersionInput)
+
+
+class SkillUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+    scope: Literal["global", "organization", "workspace"] | None = None
+    workspace_id: uuid.UUID | None = None
+    status: Literal["active", "disabled"] | None = None
+
+
+class SkillFileOut(ORMModel):
+    id: uuid.UUID
+    filename: str
+    mime_type: str
+    size_bytes: int
+    checksum_sha256: str
+    description: str | None
+    created_at: datetime
+
+
+class SkillVersionOut(ORMModel):
+    id: uuid.UUID
+    version: int
+    instructions: str
+    variables_schema: dict[str, Any]
+    variables_defaults: dict[str, Any]
+    tool_requirements: list[str]
+    default_priority: int
+    published_at: datetime | None
+    change_note: str | None
+    created_at: datetime
+    files: list[SkillFileOut] = Field(default_factory=list)
+
+
+class SkillOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    name: str
+    slug: str
+    description: str
+    status: str
+    scope: str
+    workspace_id: uuid.UUID | None
+    active_version_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+    active_version: SkillVersionOut | None = None
+    draft_version: SkillVersionOut | None = None
+    versions: list[SkillVersionOut] = Field(default_factory=list)
+
+
+class PublishRequest(BaseModel):
+    """Publish the current draft, or roll back to an already-published version."""
+
+    version_id: uuid.UUID | None = None
+    change_note: str | None = None
+
+
+# ----------------------------------------------------------------------------- agents
+class AgentVersionInput(BaseModel):
+    provider_id: uuid.UUID | None = None
+    model: str | None = Field(default=None, max_length=120)
+    instructions: str | None = None
+    handoff_description: str | None = None
+    model_settings: dict[str, Any] | None = None
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+    can_ask_clarification: bool | None = None
+    max_steps: int | None = Field(default=None, ge=1, le=500)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=7200)
+    change_note: str | None = None
+
+
+class AgentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    slug: str | None = Slug
+    command: str = Field(min_length=2, max_length=41)
+    description: str = ""
+    is_manager: bool = False
+    version: AgentVersionInput = Field(default_factory=AgentVersionInput)
+
+    @field_validator("command")
+    @classmethod
+    def _command(cls, v: str) -> str:
+        v = normalize_command(v)
+        if not is_valid_command(v):
+            raise ValueError("command must look like /resize (lowercase letters, digits, - or _)")
+        return v
+
+
+class AgentUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    command: str | None = Field(default=None, min_length=2, max_length=41)
+    description: str | None = None
+    is_manager: bool | None = None
+    status: Literal["active", "disabled"] | None = None
+
+    @field_validator("command")
+    @classmethod
+    def _command(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = normalize_command(v)
+        if not is_valid_command(v):
+            raise ValueError("command must look like /resize")
+        return v
+
+
+class SkillBindingIn(BaseModel):
+    priority: int | None = Field(default=None, ge=0, le=10000)
+    skill_version_id: uuid.UUID | None = Field(
+        default=None, description="pin; null follows the active version"
+    )
+    enabled: bool = True
+    variables: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolBindingIn(BaseModel):
+    enabled: bool = True
+    settings_json: dict[str, Any] = Field(default_factory=dict)
+    max_calls_per_run: int | None = Field(default=None, ge=1, le=1000)
+
+
+class HandoffIn(BaseModel):
+    routing_hint: str = ""
+    is_failure_route: bool = False
+
+
+class SkillBindingOut(ORMModel):
+    id: uuid.UUID
+    skill_id: uuid.UUID
+    skill_version_id: uuid.UUID | None
+    priority: int
+    enabled: bool
+    variables: dict[str, Any]
+    skill_name: str | None = None
+    skill_slug: str | None = None
+
+
+class ToolBindingOut(ORMModel):
+    id: uuid.UUID
+    tool_id: uuid.UUID
+    enabled: bool
+    settings_json: dict[str, Any]
+    max_calls_per_run: int | None
+    tool_slug: str | None = None
+    tool_display_name: str | None = None
+
+
+class HandoffOut(ORMModel):
+    id: uuid.UUID
+    target_agent_id: uuid.UUID
+    routing_hint: str
+    is_failure_route: bool
+    target_agent_name: str | None = None
+    target_agent_command: str | None = None
+
+
+class AgentVersionOut(ORMModel):
+    id: uuid.UUID
+    version: int
+    published_at: datetime | None
+    provider_id: uuid.UUID | None
+    model: str | None
+    instructions: str
+    handoff_description: str
+    model_settings: dict[str, Any]
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    can_ask_clarification: bool
+    max_steps: int
+    timeout_seconds: int
+    change_note: str | None
+    created_at: datetime
+    skills: list[SkillBindingOut] = Field(default_factory=list)
+    tools: list[ToolBindingOut] = Field(default_factory=list)
+    handoffs: list[HandoffOut] = Field(default_factory=list)
+
+
+class AgentSummaryOut(ORMModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    name: str
+    slug: str
+    command: str
+    description: str
+    status: str
+    is_manager: bool
+    active_version_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+    active_version_number: int | None = None
+    has_draft: bool = False
+    model: str | None = None
+
+
+class AgentOut(AgentSummaryOut):
+    active_version: AgentVersionOut | None = None
+    draft_version: AgentVersionOut | None = None
+    versions: list[AgentVersionOut] = Field(default_factory=list)
+
+
+class AgentTestRequest(BaseModel):
+    input: str = Field(min_length=1, max_length=20000)
+    use_draft: bool = True
+    project_id: uuid.UUID | None = None
+
+
+class AgentTestOut(BaseModel):
+    """Safe trace only: no reasoning, no provider payloads."""
+
+    agent_slug: str
+    version: int
+    provider_type: str
+    model: str
+    runner: str
+    output_text: str
+    structured_output: dict[str, Any] | None
+    requires_clarification: bool
+    question: str | None
+    defaults_used: list[str]
+    steps: int
+    instruction_sections: list[str]
+    instruction_chars: int
+    tools: list[str]
+    duration_ms: int
+
+
+class CommandOut(BaseModel):
+    """What the composer autocomplete needs (spec §14)."""
+
+    agent_id: uuid.UUID
+    name: str
+    slug: str
+    command: str
+    description: str
+    is_manager: bool
