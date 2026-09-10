@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+# Node
+node_modules/
+.next/
+out/
+# Local data / env
+.env
+.env.local
+.data/
+# OS
+.DS_Store

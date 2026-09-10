@@ -1,0 +1,81 @@
+{
+  "event_types": [
+    "run.started",
+    "node.started",
+    "context.loaded",
+    "agent.started",
+    "tool.started",
+    "tool.completed",
+    "artifact.created",
+    "clarification.requested",
+    "clarification.received",
+    "node.completed",
+    "node.failed",
+    "run.completed",
+    "run.failed",
+    "run.cancelled",
+    "heartbeat"
+  ],
+  "node_states": [
+    "PENDING",
+    "RUNNING",
+    "SUCCEEDED",
+    "FAILED",
+    "WAITING_FOR_USER",
+    "SKIPPED"
+  ],
+  "node_transitions": {
+    "FAILED": [
+      "PENDING"
+    ],
+    "PENDING": [
+      "FAILED",
+      "RUNNING",
+      "SKIPPED"
+    ],
+    "RUNNING": [
+      "FAILED",
+      "SUCCEEDED",
+      "WAITING_FOR_USER"
+    ],
+    "SKIPPED": [],
+    "SUCCEEDED": [],
+    "WAITING_FOR_USER": [
+      "FAILED",
+      "RUNNING",
+      "SKIPPED"
+    ]
+  },
+  "run_states": [
+    "QUEUED",
+    "RUNNING",
+    "WAITING_FOR_USER",
+    "SUCCEEDED",
+    "FAILED",
+    "CANCELLED"
+  ],
+  "run_transitions": {
+    "CANCELLED": [],
+    "FAILED": [
+      "QUEUED"
+    ],
+    "QUEUED": [
+      "CANCELLED",
+      "FAILED",
+      "RUNNING"
+    ],
+    "RUNNING": [
+      "CANCELLED",
+      "FAILED",
+      "SUCCEEDED",
+      "WAITING_FOR_USER"
+    ],
+    "SUCCEEDED": [],
+    "WAITING_FOR_USER": [
+      "CANCELLED",
+      "FAILED",
+      "QUEUED",
+      "RUNNING"
+    ]
+  }
+}
