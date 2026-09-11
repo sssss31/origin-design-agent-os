@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChatThread } from "@/components/chat/ChatThread";
+import { RECENTS_CHANGED } from "@/components/shell/AppShell";
 import { Composer } from "@/components/chat/Composer";
 import { ExecutionPanel } from "@/components/chat/ExecutionPanel";
 import { TopBar } from "@/components/TopBar";
@@ -29,7 +30,6 @@ export default function ChatPage() {
   const events = useMemo(() => (runId ? eventsByRun[runId] ?? [] : []), [eventsByRun, runId]);
   const timeline: Timeline | null = useMemo(() => (runId && events.length ? deriveTimeline(events) : null), [events, runId]);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState("");
   const sse = useRef<SseHandle | null>(null);
@@ -72,6 +72,7 @@ export default function ChatPage() {
       const created = await runsApi.create(conversationId, { content, selected_asset_ids: assetIds });
       await loadMessages();
       void loadSidebar();
+      window.dispatchEvent(new Event(RECENTS_CHANGED));
       setRunId(created.run_id);
     } catch (err) {
       setError(err instanceof ApiError ? `${err.message}${err.code === "agent_unavailable" ? " — pick another command from the menu." : ""}` : "Could not start the run");
@@ -91,24 +92,13 @@ export default function ChatPage() {
     <>
       <TopBar title={conversation?.title ?? "Chat"} />
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
-          <div className="space-y-2 p-2">
-            <Button className="w-full justify-center" onClick={() => void conversationsApi.create(projectId).then((c) => router.push(`/app/projects/${projectId}/chat/${c.id}`))}>+ New chat</Button>
-            <Input placeholder="Search chats" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2">
-            {conversations.filter((c) => c.title.toLowerCase().includes(search.toLowerCase())).map((c) => (
-              <Link key={c.id} href={`/app/projects/${projectId}/chat/${c.id}`} className={`block truncate rounded-md px-2 py-1.5 text-sm ${c.id === conversationId ? "bg-accent/15 text-accent" : "hover:bg-surface-2"}`}>{c.title}</Link>
-            ))}
-          </div>
-          <div className="space-y-1 border-t border-border p-2 text-xs">
-            <Link href={`/app/projects/${projectId}/assets`} className="block rounded px-2 py-1 hover:bg-surface-2">Assets ({assets.length})</Link>
-            <Link href={`/app/projects/${projectId}/artifacts`} className="block rounded px-2 py-1 hover:bg-surface-2">Artifacts</Link>
-            <Link href={`/app/projects/${projectId}`} className="block rounded px-2 py-1 text-muted hover:bg-surface-2">Project settings</Link>
-          </div>
-        </aside>
         <section className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-1 text-xs">
+          <div className="flex items-center gap-3 border-b border-border px-4 py-1.5 text-xs">
+            <Link href={`/app/projects/${projectId}`} className="font-medium text-muted hover:text-text">{conversations.find((c) => c.id === conversationId) ? "Project" : "Project"}</Link>
+            <Link href={`/app/projects/${projectId}/assets`} className="text-muted hover:text-text">Assets ({assets.length})</Link>
+            <Link href={`/app/projects/${projectId}/artifacts`} className="text-muted hover:text-text">Artifacts</Link>
+            <button className="text-muted hover:text-text" onClick={() => void conversationsApi.create(projectId).then((c) => { window.dispatchEvent(new Event(RECENTS_CHANGED)); router.push(`/app/projects/${projectId}/chat/${c.id}`); })}>+ New chat here</button>
+            <span className="mx-1 text-border-strong">|</span>
             {renaming ? (
               <>
                 <Input value={title} onChange={(e) => setTitle(e.target.value)} className="max-w-xs" />
