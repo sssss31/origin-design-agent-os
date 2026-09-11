@@ -32,6 +32,7 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState("");
+  const [panelOpen, setPanelOpen] = useState(false);
   const sse = useRef<SseHandle | null>(null);
 
   const loadMessages = useCallback(() => conversationsApi.messages(conversationId).then(setMessages).catch(() => undefined), [conversationId]);
@@ -55,6 +56,7 @@ export default function ChatPage() {
     const collected: EventOut[] = [];
     sse.current = subscribeRunEvents(runId, {
       onEvent: (e) => {
+        if (e.type === "clarification.requested") setPanelOpen(true);
         collected.push(e);
         setEventsByRun((prev) => ({ ...prev, [runId]: [...collected] }));
         if (e.type === "artifact.created" || e.type === "run.completed" || e.type === "clarification.received") void loadMessages();
@@ -98,6 +100,7 @@ export default function ChatPage() {
             <Link href={`/app/projects/${projectId}/assets`} className="text-muted hover:text-text">Assets ({assets.length})</Link>
             <Link href={`/app/projects/${projectId}/artifacts`} className="text-muted hover:text-text">Artifacts</Link>
             <button className="text-muted hover:text-text" onClick={() => void conversationsApi.create(projectId).then((c) => { window.dispatchEvent(new Event(RECENTS_CHANGED)); router.push(`/app/projects/${projectId}/chat/${c.id}`); })}>+ New chat here</button>
+            <button className="text-muted hover:text-text xl:hidden" onClick={() => setPanelOpen((o) => !o)}>{panelOpen ? "Hide execution" : "Execution"}</button>
             <span className="mx-1 text-border-strong">|</span>
             {renaming ? (
               <>
@@ -115,7 +118,7 @@ export default function ChatPage() {
           <ChatThread messages={messages} activeRunId={runId} onOpenRun={setRunId} />
           <Composer assets={assets} busy={busy} onSend={send} onStop={runId ? () => void act(() => runsApi.cancel(runId)) : undefined} />
         </section>
-        <ExecutionPanel runId={runId} timeline={timeline} events={events} onAnswer={(a) => act(() => runsApi.clarify(runId!, a))} onCancel={() => act(() => runsApi.cancel(runId!))} onRetry={() => act(() => runsApi.retry(runId!))} />
+        <ExecutionPanel runId={runId} timeline={timeline} events={events} open={panelOpen} onClose={() => setPanelOpen(false)} onAnswer={(a) => act(() => runsApi.clarify(runId!, a))} onCancel={() => act(() => runsApi.cancel(runId!))} onRetry={() => act(() => runsApi.retry(runId!))} />
       </div>
     </>
   );
