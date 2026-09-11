@@ -115,9 +115,14 @@ def build_embeddings(settings: Settings) -> EmbeddingProvider:
 def build_runners(settings: Settings) -> dict[str, AgentRunner]:
     """Provider type → runner. Provider rows (Phase 2) pick one of these by `type`."""
     from app.adapters.runners.echo import EchoRunner
+    from app.adapters.runners.openai_agents import OpenAIAgentsRunner
 
-    runners: dict[str, AgentRunner] = {"echo": EchoRunner()}
-    # Phase 4: runners["openai"] = OpenAIAgentsRunner(...)
+    runners: dict[str, AgentRunner] = {
+        "echo": EchoRunner(),
+        "openai": OpenAIAgentsRunner(
+            trace_include_sensitive_data=settings.openai_agents_trace_include_sensitive_data
+        ),
+    }
     return runners
 
 

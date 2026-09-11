@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -16,6 +16,6 @@ class EventBus(Protocol):
 
     async def publish(self, channel: str, event: dict[str, Any]) -> None: ...
 
-    def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]: ...
+    def subscribe(self, channel: str) -> AsyncGenerator[dict[str, Any], None]: ...
 
     async def health(self) -> bool: ...

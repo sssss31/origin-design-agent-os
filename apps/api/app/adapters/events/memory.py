@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 
@@ -18,7 +18,7 @@ class InMemoryEventBus:
         for queue in list(self._subscribers.get(channel, ())):
             queue.put_nowait(event)
 
-    async def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
+    async def subscribe(self, channel: str) -> AsyncGenerator[dict[str, Any], None]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._subscribers[channel].add(queue)
         try:

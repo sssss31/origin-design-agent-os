@@ -37,11 +37,15 @@ class InternalFunctionExecutor:
             )
         except Exception as exc:
             return ToolResult(ok=False, error_code="tool_error", error_message=redact(str(exc)))
+        files = list(output.pop("files", []) or []) if isinstance(output, dict) else []
         if call.tool.output_schema:
             try:
                 jsonschema.validate(output, call.tool.output_schema)
             except jsonschema.ValidationError as exc:
                 return ToolResult(ok=False, error_code="invalid_output", error_message=exc.message)
         return ToolResult(
-            ok=True, output=redact(output), duration_ms=int((time.perf_counter() - started) * 1000)
+            ok=True,
+            output=redact(output),
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            files=files,
         )

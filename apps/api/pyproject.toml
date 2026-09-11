@@ -22,6 +22,10 @@ dependencies = [
   "redis>=6",
   "sse-starlette>=2.1",
   "typer>=0.15",
+  "pillow>=11",
+  "pypdf>=5",
+  "openai>=1.100",
+  "openai-agents>=0.3",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +35,8 @@ dev = [
   "pytest-cov>=6",
   "ruff>=0.12",
   "mypy>=1.17",
+  "bandit>=1.8",
+  "pip-audit>=2.8",
 ]
 openai = [
   "openai>=1.100",
@@ -54,9 +60,14 @@ select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "T20"]
 ignore = ["S101", "B008", "S105", "S106"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S", "T20"]
+"tests/*" = ["S", "T20", "E501"]
 "alembic/*" = ["I", "E501"]
 "app/cli.py" = ["T20"]
+"scripts/*" = ["T20"]
+"app/tools/builtin.py" = ["E501"]
+"app/workers/run_executor.py" = ["E501"]
+"app/services/context.py" = ["E501"]
+"app/seeds/*" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -51,7 +51,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.engine = engine
         app.state.session_factory = create_session_factory(engine)
         app.state.adapters = build_adapters(settings, app.state.session_factory)
-        # Phase 5 registers the run executor here: app.state.adapters.queue.register("run.execute", ...)
+        from app.workers.recovery import recover_runs
+        from app.workers.run_executor import RunExecutor
+
+        app.state.adapters.queue.register(
+            "run.execute", RunExecutor(app.state.session_factory, app.state.adapters, settings).handle
+        )
+        await recover_runs(app.state.session_factory, app.state.adapters, settings)
         await _dev_bootstrap(app, settings)
         log.info(
             "startup",

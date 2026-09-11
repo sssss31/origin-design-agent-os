@@ -32,6 +32,7 @@ class RuntimeAgent:
     can_ask_clarification: bool = True
     max_steps: int = 20
     timeout_seconds: int = 300
+    provider_credentials: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)

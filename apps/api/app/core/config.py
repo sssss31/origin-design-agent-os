@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     encryption_key: str = Field(default="", description="Fernet key used by the fernet secret backend.")
     signed_url_ttl_seconds: int = 300
     max_upload_mb: int = 50
+    default_runs_per_day: int = Field(
+        default=500, description="Per-organization run quota (0 = unlimited); org settings override."
+    )
+    default_max_revisions: int = 1
+    stale_run_seconds: int = 900
+    rate_limit_per_minute: int = Field(default=240, description="Per-user API rate limit (0 = off).")
 
     # --- providers (single-provider V0 convenience; admin-managed providers override) -
     openai_api_key: str | None = None

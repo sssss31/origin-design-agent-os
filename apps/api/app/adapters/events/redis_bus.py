@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 
@@ -22,7 +22,7 @@ class RedisEventBus:
     async def publish(self, channel: str, event: dict[str, Any]) -> None:
         await self._redis.publish(self._channel(channel), json.dumps(event))
 
-    async def subscribe(self, channel: str) -> AsyncIterator[dict[str, Any]]:
+    async def subscribe(self, channel: str) -> AsyncGenerator[dict[str, Any], None]:
         pubsub = self._redis.pubsub()
         await pubsub.subscribe(self._channel(channel))
         try:

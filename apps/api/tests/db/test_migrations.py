@@ -19,6 +19,18 @@ EXPECTED_TABLES = {
     "project_rules",
     "audit_logs",
     "secret_refs",
+    "ai_providers",
+    "agents",
+    "agent_versions",
+    "skills",
+    "tools",
+    "conversations",
+    "messages",
+    "message_attachments",
+    "assets",
+    "asset_versions",
+    "artifacts",
+    "artifact_versions",
     "alembic_version",
 }
 
