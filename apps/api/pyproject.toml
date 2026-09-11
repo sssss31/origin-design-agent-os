@@ -26,6 +26,7 @@ dependencies = [
   "pypdf>=5",
   "openai>=1.100",
   "openai-agents>=0.3",
+  "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +42,7 @@ dev = [
 openai = [
   "openai>=1.100",
   "openai-agents>=0.3",
+  "defusedxml>=0.7",
 ]
 
 [build-system]

@@ -382,7 +382,13 @@ async def seed_design_agents(
     publish: bool = True,
 ) -> dict[str, int]:
     """Seed tools, skills, a provider and the eight agents. Returns counts of created entities."""
-    stats = {"tools": await seed_builtin_tools(session, ctx), "skills": 0, "agents": 0, "published": 0}
+    stats = {
+        "tools": await seed_builtin_tools(session, ctx),
+        "skills": 0,
+        "agents": 0,
+        "published": 0,
+        "skipped": 0,
+    }
     provider = await ensure_provider(session, ctx, provider_type, models=[model] if model else None)
     chosen_model = (
         model or provider.default_model or (provider.models[0].model if provider.models else "gpt-5")
@@ -396,11 +402,19 @@ async def seed_design_agents(
         ).all()
     }
     agent_svc = AgentService(session, ctx)
-    existing = {a.slug: a for a in await agent_svc.list()}
+    all_agents = await agent_svc.list()
+    existing = {a.slug: a for a in all_agents}
+    taken_commands = {a.command: a for a in all_agents if a.status == "active"}
     created: dict[str, Agent] = {}
+    stats["skipped"] = 0
     for seed in AGENTS:
         if seed.slug in existing:
             created[seed.slug] = existing[seed.slug]
+            continue
+        if seed.command in taken_commands:
+            # an admin already runs their own agent on this command: keep theirs, wire handoffs to it
+            created[seed.slug] = taken_commands[seed.command]
+            stats["skipped"] += 1
             continue
         agent = await agent_svc.create(
             AgentCreate(
@@ -431,7 +445,7 @@ async def seed_design_agents(
     # handoffs after every agent exists
     for seed in AGENTS:
         agent = created[seed.slug]
-        if seed.slug in existing:
+        if seed.slug in existing or agent.slug != seed.slug:
             continue
         for target_slug, hint, failure in seed.handoffs:
             target = created.get(target_slug)

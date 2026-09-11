@@ -7,10 +7,10 @@ import hashlib
 import io
 import json
 import uuid
-import xml.etree.ElementTree as ET
 from typing import Any
 
 import httpx
+from defusedxml import ElementTree as ET  # hardened against XML bombs / external entities
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -289,8 +289,8 @@ register(
 
 def _svg_stats(data: bytes) -> dict[str, Any]:
     try:
-        root = ET.fromstring(data)  # noqa: S314 - parsed for statistics only, never rendered
-    except ET.ParseError as exc:
+        root = ET.fromstring(data)
+    except Exception as exc:
         return {"svg_valid": False, "svg_error": str(exc)[:200]}
 
     def local(tag: str) -> str:

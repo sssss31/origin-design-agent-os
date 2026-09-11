@@ -81,27 +81,27 @@ Scope (spec §16 P1, §2, §6 env, §10 identity/workspace/governance, §17):
 Scope (spec §4, §5, §6, §16 P2): tables + services for `ai_providers`, `provider_models`, `secret_refs`, `agents`, `agent_versions`, `agent_skill_bindings`, `agent_tool_bindings`, `agent_handoffs`, `skills`, `skill_versions`, `skill_files`, `tools`, `tool_versions`, `tool_permissions`. Draft/publish/rollback (`active_version_id` atomic switch), provider secret write-only endpoint + `test` (minimal authenticated request), model allowlist, audit on every publish/secret/permission change. Admin UI pages: Agents, Skills, Providers, Tools.
 Acceptance: admin adds OpenAI key, creates skill, creates agent, attaches skill/tool, publishes, and the `/command` appears in the composer without redeploy.
 
-### Phase 3 — Chat + files
+### Phase 3 — Chat + files (COMPLETE — see `docs/reports/phase-3.md`)
 Scope (§7, §8, §16 P3): `conversations`, `messages`, `message_attachments`, `assets`, `asset_versions`, `artifacts`, `artifact_versions`. Multipart upload → ObjectStorage port (MIME/size/filename validation, no Asset marked ready until upload completes), short-lived signed download URLs, sidebar/new chat/rename/archive/search, composer, artifact preview cards.
 Acceptance: chat survives restart; uploaded file visible and downloadable only with authorization.
 
-### Phase 4 — Router + Context + single-agent runtime
+### Phase 4 — Router + Context + single-agent runtime (COMPLETE — see `docs/reports/phase-4-5.md`)
 Scope (§3 slash commands, §5 prompt composition, §7 context package, §12): slash parser (domain, already in P1), command resolver against active agents, `AgentFactory` from DB version, `PromptComposer` (platform rules → org rules → agent instructions → skills by priority → workspace/project rules → context summary → user request), `ContextManager` (project summary, selected assets, recent + relevant messages), OpenAI Agents SDK adapter behind `AgentRunner` port, `EchoRunner` for tests.
 Acceptance: `/copy` runs end-to-end from UI with DB-configured prompt and model.
 
-### Phase 5 — Workflow runs + live events
+### Phase 5 — Workflow runs + live events (COMPLETE — see `docs/reports/phase-4-5.md`)
 Scope (§9, §11 runs API, §14 execution panel): `workflow_definitions`, `workflow_versions`, `workflow_runs`, `node_runs`, `execution_events`; run API, SSE stream with replay-from-sequence + live tail (`Last-Event-ID`), cancellation, retry of safe nodes, clarification `WAITING_FOR_USER` pause/resume with persisted resume state, worker with idempotent claim (`FOR UPDATE SKIP LOCKED`).
 Acceptance: user sees Parse → Context → Agent → Save Result live and can refresh without losing state.
 
-### Phase 6 — Eight design agents
+### Phase 6 — Eight design agents (COMPLETE — see `docs/reports/phase-6-7.md`)
 Scope (§13, §21): seed script for the eight agents + eight skills as versioned records (idempotent, editable afterwards from admin UI), built-in tools (image generation/analysis, file inspection, SVG/PDF processors) registered as `tools` rows with `executor_type=internal_function`, Manager sequential delegation with handoff permissions.
 Acceptance: all eight commands resolve to the configured agents.
 
-### Phase 7 — Design workflow hardening
+### Phase 7 — Design workflow hardening (COMPLETE — see `docs/reports/phase-6-7.md`)
 Scope (§8 version flow, §16 P7): artifact lineage (`parent_artifact_id`), approval/final states, structured QC report with severity and pass/fail, revision loop limits, export metadata validation.
 Acceptance: master → resize → QC → export completes and is auditable.
 
-### Phase 8 — Security, QA, deployment
+### Phase 8 — Security, QA, deployment (COMPLETE — see `docs/reports/phase-8.md`, `docs/SECURITY.md`)
 Scope (§16 P8, §17, §18, §19): rate limits + org quotas, trace sensitivity off by default, full audit coverage, E2E tests, backup policy docs, staging deploy, load test on concurrent SSE runs, rollback runbook.
 
 ## 3. Verification — spec coverage matrix

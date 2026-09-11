@@ -41,12 +41,17 @@ Starts Postgres (pgvector image), Redis, MinIO, the API (migrations run on start
 worker and the web app. Adapters switch automatically to S3 storage, Redis queue and
 Redis event bus (see `infra/docker-compose.yml`).
 
+## First run
+
+After `make migrate` and `make bootstrap-admin`, seed the eight design agents (`make seed email=<admin> provider=openai`) or press **Seed the eight design agents** on the admin dashboard, add the OpenAI key under Admin → Providers, then open a project chat and type `/`.
+
 ## Quality gates
 
 ```bash
 make lint        # ruff + eslint
 make typecheck   # mypy + tsc
-make test        # pytest: unit + API + migrations (needs TEST_DATABASE_URL or local Postgres)
+make test        # pytest: unit + API + migrations + workflow + E2E (needs TEST_DATABASE_URL or local Postgres)
+make security    # bandit + pip-audit + npm audit
 cd apps/web && npm test && npm run build
 ```
 
@@ -57,4 +62,4 @@ cd apps/web && npm test && npm run build
 - Swapping infrastructure (storage, queue, events, LLM runtime, scheduler): one adapter
   under `apps/api/app/adapters/` and one line in `adapters/registry.py`. See
   `docs/ARCHITECTURE.md` §3 and §7.
-- Build order and spec coverage: `docs/PLAN.md`. Phase reports: `docs/reports/`.
+- Build order and spec coverage: `docs/PLAN.md`. Phase reports: `docs/reports/`. Security review: `docs/SECURITY.md`. Operations: `docs/RUNBOOK.md`.

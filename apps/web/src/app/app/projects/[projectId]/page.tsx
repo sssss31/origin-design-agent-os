@@ -8,13 +8,16 @@ import { Button } from "@/components/ui/Button";
 import { Badge, Card, CardTitle, EmptyState, ErrorText } from "@/components/ui/Card";
 import { Field, Input, Textarea } from "@/components/ui/Input";
 import { ApiError } from "@/lib/api/client";
+import { useRouter } from "next/navigation";
 import { commandsApi } from "@/lib/api/admin";
+import { conversationsApi } from "@/lib/api/chat";
 import { projectsApi } from "@/lib/api/workspaces";
 import type { CommandOut } from "@/types/admin";
 import type { ProjectOut, ProjectRuleOut } from "@/types/api";
 
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
+  const router = useRouter();
   const [project, setProject] = useState<ProjectOut | null>(null);
   const [rules, setRules] = useState<ProjectRuleOut[]>([]);
   const [commands, setCommands] = useState<CommandOut[]>([]);
@@ -67,10 +70,11 @@ export default function ProjectPage() {
             <CardTitle action={<Link href={`/app/workspaces/${project.workspace_id}`} className="text-xs text-accent">← workspace</Link>}>
               Chat
             </CardTitle>
-            <EmptyState
-              title="Conversations arrive in Phase 3"
-              body="This project will host a single chat where /master, /resize, /editable, /qc and other agents run with live execution status."
-            />
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void conversationsApi.list(projectId).then((list) => { const latest = list[0]; if (latest) router.push(`/app/projects/${projectId}/chat/${latest.id}`); else return conversationsApi.create(projectId).then((c) => router.push(`/app/projects/${projectId}/chat/${c.id}`)); })}>Open chat</Button>
+              <Link href={`/app/projects/${projectId}/assets`}><Button variant="secondary">Assets</Button></Link>
+              <Link href={`/app/projects/${projectId}/artifacts`}><Button variant="secondary">Artifacts</Button></Link>
+            </div>
             <div className="mt-3">
               <p className="mb-1 text-xs font-medium text-muted">Available commands (live from admin configuration)</p>
               {commands.length === 0 ? <p className="text-xs text-muted">No active agents yet.</p> : (

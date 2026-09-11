@@ -37,3 +37,15 @@ name and by value pattern before emission.
 1. Redeploy the previous image tag (API and web are independent).
 2. If the release added a migration that the previous code cannot run against, `alembic downgrade <prev>` first. Migrations are written to be backward compatible for one release where possible (add columns nullable, backfill, then constrain in the next release).
 3. Confirm `/readyz` on every replica.
+
+## Seeding the design agents
+`python -m app.cli seed-design-agents --email <admin> --provider-type openai` (or from Admin → Dashboard).
+Idempotent: existing slugs and commands are kept. Then add the OpenAI key under Admin → Providers and Test connection.
+
+## Workers and streaming
+- `QUEUE_BACKEND=redis`: run `python -m app.workers.main` (compose service `worker`); with `inline` the API process executes runs.
+- SSE: keep `compress: false` in the web app and disable proxy buffering (`X-Accel-Buffering: no` is set by the API; for nginx use `proxy_buffering off;`). Clients resume with `after=<sequence>` / `Last-Event-ID`.
+- Stale runs: a worker that dies mid-run leaves `heartbeat_at` behind; on the next start `recover_runs` marks runs older than `STALE_RUN_SECONDS` as FAILED (retryable) and re-enqueues QUEUED ones.
+
+## Load testing
+`python scripts/load_test_sse.py --base https://staging.example/api/v1 --email … --password … --conversation <id> --runs 50 --concurrency 20`

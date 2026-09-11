@@ -9,6 +9,8 @@ const apiProxyTarget = process.env.API_PROXY_TARGET ?? "http://localhost:8000";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Server-Sent Events must not be gzip-buffered by the Node server; compress at the edge proxy/CDN instead.
+  compress: false,
   reactStrictMode: true,
   poweredByHeader: false,
   async rewrites() {

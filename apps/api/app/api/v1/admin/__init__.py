@@ -11,11 +11,13 @@ AdminAuth = Annotated[AuthContext, Depends(require_org_role(Role.ADMIN))]
 
 
 def admin_router() -> APIRouter:
-    from app.api.v1.admin import agents, providers, skills, tools
+    from app.api.v1.admin import agents, governance, providers, seed, skills, tools
 
     router = APIRouter(prefix="/admin", tags=["admin"])
     router.include_router(providers.router)
     router.include_router(tools.router)
     router.include_router(skills.router)
     router.include_router(agents.router)
+    router.include_router(governance.router)
+    router.include_router(seed.router)
     return router

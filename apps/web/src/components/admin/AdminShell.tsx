@@ -11,6 +11,7 @@ const NAV = [
   ["/admin/skills", "Skills"],
   ["/admin/providers", "Providers"],
   ["/admin/tools", "Tools"],
+  ["/admin/audit", "Audit"],
 ] as const;
 
 export function AdminShell({ title, children }: { title: string; children: React.ReactNode }) {

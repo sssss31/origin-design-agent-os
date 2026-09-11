@@ -15,6 +15,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
+from app.core.ratelimit import RateLimiter, RateLimitMiddleware
 from app.db.session import create_engine, create_session_factory
 
 log = get_logger("startup")
@@ -92,6 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expose_headers=["X-Request-Id"],
     )
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(RateLimitMiddleware, limiter=RateLimiter(settings))
     register_exception_handlers(app)
     app.include_router(root_health_router)  # /healthz, /readyz for load balancers
     app.include_router(api_router, prefix=settings.api_prefix)
