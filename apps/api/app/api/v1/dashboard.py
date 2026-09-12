@@ -359,3 +359,76 @@ async def profile(ctx: Auth, session: DB) -> ProfileOut:
         counts={"projects": len(ids), "conversations": int(convs or 0), "artifacts": int(arts or 0)},
         joined_at=ctx.user.created_at,
     )
+
+
+class RecentRun(BaseModel):
+    id: uuid.UUID
+    status: str
+    command: str | None
+    user_input: str
+    conversation_id: uuid.UUID
+    conversation_title: str
+    project_id: uuid.UUID
+    project_name: str
+    created_at: datetime
+    finished_at: datetime | None
+    node_statuses: dict[str, str]
+    agent_slugs: list[str]
+
+
+@router.get("/runs/recent", response_model=list[RecentRun])
+async def recent_runs(
+    ctx: Auth, session: DB, limit: int = Query(default=20, ge=1, le=100)
+) -> list[RecentRun]:
+    """Latest runs across accessible projects, with per-node status for the Nodes canvas."""
+    from app.models.workflows import NodeRun, WorkflowRun
+
+    projects = await accessible_project_ids(session, ctx)
+    if not projects:
+        return []
+    runs = (
+        await session.scalars(
+            select(WorkflowRun)
+            .options(selectinload(WorkflowRun.nodes))
+            .where(WorkflowRun.project_id.in_(projects.keys()))
+            .order_by(WorkflowRun.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    conv_ids = {r.conversation_id for r in runs}
+    titles = (
+        {
+            c.id: c.title
+            for c in (await session.scalars(select(Conversation).where(Conversation.id.in_(conv_ids)))).all()
+        }
+        if conv_ids
+        else {}
+    )
+    agent_ids = {n.agent_id for r in runs for n in r.nodes if n.agent_id}
+    slugs = (
+        {a.id: a.slug for a in (await session.scalars(select(Agent).where(Agent.id.in_(agent_ids)))).all()}
+        if agent_ids
+        else {}
+    )
+    out = []
+    for r in runs:
+        nodes: list[NodeRun] = sorted(r.nodes, key=lambda n: n.index)
+        out.append(
+            RecentRun(
+                id=r.id,
+                status=r.status,
+                command=r.command,
+                user_input=r.user_input[:200],
+                conversation_id=r.conversation_id,
+                conversation_title=titles.get(r.conversation_id, "Chat"),
+                project_id=r.project_id,
+                project_name=projects[r.project_id][0].name,
+                created_at=r.created_at,
+                finished_at=r.finished_at,
+                node_statuses={
+                    slugs[n.agent_id]: n.status for n in nodes if n.agent_id and n.agent_id in slugs
+                },
+                agent_slugs=[slugs[n.agent_id] for n in nodes if n.agent_id and n.agent_id in slugs],
+            )
+        )
+    return out

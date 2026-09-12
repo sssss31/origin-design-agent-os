@@ -15,7 +15,7 @@ A self-contained monorepo implementing the
 
 ## Quick start (local, no Docker)
 
-Requirements: Python 3.12+, Node 20+, a PostgreSQL 15+ database.
+Requirements: Python 3.12+, Node 20+, a PostgreSQL 15+ database (or `make db-local` to run an isolated Postgres 17 cluster in `.data/pg17` when Postgres 17 is installed and Docker is not).
 
 ```bash
 cp .env.example .env                 # set DATABASE_URL to your Postgres

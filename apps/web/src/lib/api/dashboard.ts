@@ -1,5 +1,5 @@
 import { api } from "@/lib/api/client";
-import type { AgentGraph, LibraryOut, ProfileOut, QuickStartOut, RecentConversation } from "@/types/dashboard";
+import type { AgentGraph, LibraryOut, ProfileOut, QuickStartOut, RecentConversation, RecentRun } from "@/types/dashboard";
 
 export const dashboardApi = {
   recents: (params: { limit?: number; search?: string; include_archived?: boolean } = {}) => {
@@ -19,4 +19,5 @@ export const dashboardApi = {
   graph: () => api<AgentGraph>("/agents/graph"),
   quickstart: (body: { content: string; project_id?: string; selected_asset_ids?: string[]; title?: string }) => api<QuickStartOut>("/quickstart", { method: "POST", body }),
   profile: () => api<ProfileOut>("/me/profile"),
+  recentRuns: (limit = 20) => api<RecentRun[]>(`/runs/recent?limit=${limit}`),
 };

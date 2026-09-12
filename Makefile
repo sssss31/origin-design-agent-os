@@ -4,7 +4,7 @@ WEB=apps/web
 PY=$(API)/.venv/bin/python
 PIP=$(API)/.venv/bin/pip
 
-.PHONY: security seed load-test help setup api-install web-install migrate migration api web worker test test-unit lint typecheck fmt check compose-up compose-down keys bootstrap-admin export-schemas
+.PHONY: db-local db-local-stop security seed load-test help setup api-install web-install migrate migration api web worker test test-unit lint typecheck fmt check compose-up compose-down keys bootstrap-admin export-schemas
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -71,6 +71,12 @@ keys: ## Print fresh JWT_SECRET / ENCRYPTION_KEY
 
 bootstrap-admin: ## Create the first admin interactively
 	cd $(API) && .venv/bin/python -m app.cli bootstrap-admin
+
+db-local: ## Start a local Postgres 17 cluster in .data/pg17 (no Docker)
+	scripts/local-postgres.sh start
+
+db-local-stop:
+	scripts/local-postgres.sh stop
 
 compose-up: ## Full stack in Docker
 	docker compose -f infra/docker-compose.yml --env-file .env up --build

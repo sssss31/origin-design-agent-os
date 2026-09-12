@@ -1,77 +1,119 @@
 "use client";
 
+import { Activity, ExternalLink, Radio } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { GraphCanvas, type RunOverlay } from "@/components/nodes/GraphCanvas";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Badge, Card, CardTitle } from "@/components/ui/Card";
+import { Select } from "@/components/ui/JsonField";
+import { runsApi } from "@/lib/api/chat";
 import { dashboardApi } from "@/lib/api/dashboard";
 import { useSession } from "@/lib/session";
-import type { AgentGraph, GraphNode } from "@/types/dashboard";
+import { subscribeRunEvents, type SseHandle } from "@/lib/sse";
+import type { AgentGraph, GraphNode, RecentRun } from "@/types/dashboard";
+import type { NodeState } from "@/types/events";
 
-const W = 190;
-const H = 72;
-
-/** Lay the manager in the centre-left and specialists in a column to its right; other nodes below. */
-function layout(graph: AgentGraph): Map<string, { x: number; y: number }> {
-  const pos = new Map<string, { x: number; y: number }>();
-  const manager = graph.nodes.find((n) => n.is_manager);
-  const targets = manager ? graph.edges.filter((e) => e.source === manager.id && !e.is_failure_route).map((e) => e.target) : [];
-  const specialists = graph.nodes.filter((n) => targets.includes(n.id));
-  const others = graph.nodes.filter((n) => !n.is_manager && !targets.includes(n.id));
-  const gapY = 96;
-  specialists.forEach((n, i) => pos.set(n.id, { x: 360, y: 40 + i * gapY }));
-  if (manager) pos.set(manager.id, { x: 40, y: Math.max(40, ((specialists.length - 1) * gapY) / 2 + 40) });
-  others.forEach((n, i) => pos.set(n.id, { x: 40 + (i % 2) * 320, y: 40 + specialists.length * gapY + Math.floor(i / 2) * gapY }));
-  return pos;
-}
+const TERMINAL = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
 
 export default function NodesPage() {
   const session = useSession();
   const [graph, setGraph] = useState<AgentGraph | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [runs, setRuns] = useState<RecentRun[]>([]);
+  const [runId, setRunId] = useState("");
+  const [statuses, setStatuses] = useState<Record<string, NodeState>>({});
+  const [order, setOrder] = useState<string[]>([]);
+  const [runStatus, setRunStatus] = useState<string | null>(null);
+  const sse = useRef<SseHandle | null>(null);
+
   useEffect(() => {
     dashboardApi.graph().then(setGraph).catch(() => setGraph({ nodes: [], edges: [] }));
+    dashboardApi.recentRuns(20).then(setRuns).catch(() => setRuns([]));
   }, [session.organizationId]);
-  const pos = useMemo(() => (graph ? layout(graph) : new Map()), [graph]);
-  const height = graph ? Math.max(360, ...[...pos.values()].map((p) => p.y + H + 40)) : 360;
+
+  // live overlay: seed statuses from the run, then tail events while it is active
+  useEffect(() => {
+    sse.current?.close();
+    if (!runId) return;
+    const run = runs.find((r) => r.id === runId);
+    if (!run) return;
+    const slugById = new Map((graph?.nodes ?? []).map((n) => [n.id, n.slug]));
+    const initial: Record<string, NodeState> = {};
+    for (const [slug, st] of Object.entries(run.node_statuses)) initial[slug] = st as NodeState;
+    const seq: string[] = [...run.agent_slugs];
+    const id = requestAnimationFrame(() => {
+      setStatuses(initial);
+      setOrder(seq);
+      setRunStatus(run.status);
+    });
+    if (TERMINAL.has(run.status)) return () => cancelAnimationFrame(id);
+    sse.current = subscribeRunEvents(runId, {
+      onEvent: (e) => {
+        const p = e.payload;
+        if (p.agent_slug && e.type === "agent.started") {
+          setStatuses((s) => ({ ...s, [p.agent_slug!]: "RUNNING" }));
+          setOrder((o) => (o.includes(p.agent_slug!) ? o : [...o, p.agent_slug!]));
+        }
+        if (e.type === "node.completed" || e.type === "node.failed" || e.type === "clarification.requested") {
+          void runsApi.get(runId).then((r) => {
+            const next: Record<string, NodeState> = {};
+            for (const n of r.nodes) {
+              const slug = n.agent_id ? slugById.get(n.agent_id) : null;
+              if (slug) next[slug] = n.status;
+            }
+            setStatuses(next);
+            setRunStatus(r.status);
+          });
+        }
+        if (p.run_status) setRunStatus(p.run_status);
+      },
+    });
+    return () => {
+      cancelAnimationFrame(id);
+      sse.current?.close();
+    };
+  }, [runId, runs, graph]);
+
+  const overlay: RunOverlay | null = useMemo(() => (runId ? { statuses, order, active: runStatus !== null && !TERMINAL.has(runStatus) } : null), [runId, statuses, order, runStatus]);
   const isAdmin = session.me?.capabilities.admin_console ?? false;
+  const current = runs.find((r) => r.id === runId);
+
   return (
     <main className="flex-1 overflow-y-auto">
-      <PageHeader title="Nodes" subtitle="The agent pipeline as configured right now: every node is an agent version, every edge an allowed handoff. Dashed red edges are QC failure routes." actions={isAdmin ? <Link href="/admin/agents" className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-surface-2">Edit agents</Link> : null} />
-      <div className="grid gap-4 px-8 pb-10 lg:grid-cols-[1fr_320px]">
-        <Card className="overflow-x-auto p-2">
-          {graph && graph.nodes.length === 0 ? <p className="p-8 text-center text-sm text-muted">No agents configured yet.</p> : null}
+      <PageHeader
+        title="Nodes"
+        subtitle="Your agent pipeline as it is configured right now. Pick a run to replay how work flowed through it — active runs animate live."
+        actions={
+          <>
+            <div className="w-72">
+              <Select
+                value={runId}
+                onChange={setRunId}
+                options={[{ value: "", label: "Overlay a run…" }, ...runs.map((r) => ({ value: r.id, label: `${r.command ?? "auto"} · ${r.status.toLowerCase()} · ${r.conversation_title.slice(0, 28)}` }))]}
+              />
+            </div>
+            {isAdmin ? <Link href="/admin/agents" className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-surface-2">Edit agents</Link> : null}
+          </>
+        }
+      />
+      <div className="grid gap-4 px-8 pb-10 xl:grid-cols-[1fr_320px]">
+        <div>
           {graph ? (
-            <svg width={Math.max(640, 40 + 360 + W + 40)} height={height} className="min-w-full">
-              <defs>
-                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border-strong)" /></marker>
-                <marker id="arrow-fail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--danger)" /></marker>
-              </defs>
-              {graph.edges.map((e, i) => {
-                const a = pos.get(e.source);
-                const b = pos.get(e.target);
-                if (!a || !b) return null;
-                const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2;
-                const back = x2 < x1;
-                const d = back ? `M ${a.x} ${y1} C ${a.x - 60} ${y1}, ${b.x + W + 60} ${y2}, ${b.x + W} ${y2}` : `M ${x1} ${y1} C ${x1 + 60} ${y1}, ${x2 - 60} ${y2}, ${x2} ${y2}`;
-                return <path key={i} d={d} fill="none" stroke={e.is_failure_route ? "var(--danger)" : "var(--border-strong)"} strokeWidth={1.5} strokeDasharray={e.is_failure_route ? "5 4" : undefined} markerEnd={`url(#${e.is_failure_route ? "arrow-fail" : "arrow"})`} opacity={selected && selected.id !== e.source && selected.id !== e.target ? 0.25 : 1} />;
-              })}
-              {graph.nodes.map((n) => {
-                const p = pos.get(n.id)!;
-                const active = selected?.id === n.id;
-                return (
-                  <g key={n.id} transform={`translate(${p.x} ${p.y})`} onClick={() => setSelected(n)} className="cursor-pointer">
-                    <rect width={W} height={H} rx={12} fill="var(--surface)" stroke={active ? "var(--accent)" : n.is_manager ? "var(--accent)" : "var(--border)"} strokeWidth={active ? 2 : 1.2} />
-                    <text x={14} y={24} fontSize={12} fontWeight={600} fill="var(--text)">{n.name}</text>
-                    <text x={14} y={42} fontSize={11} fontFamily="ui-monospace, monospace" fill="var(--accent)">{n.command}</text>
-                    <text x={14} y={58} fontSize={10} fill="var(--text-muted)">{n.model ?? "no model"} · v{n.version ?? "—"} · {n.tools.length} tools</text>
-                    {n.status !== "active" ? <text x={W - 14} y={22} fontSize={10} textAnchor="end" fill="var(--warning)">{n.status}</text> : null}
-                  </g>
-                );
-              })}
-            </svg>
-          ) : <p className="p-8 text-sm text-muted">Loading…</p>}
-        </Card>
+            graph.nodes.length ? <GraphCanvas graph={graph} selected={selected} onSelect={setSelected} overlay={overlay} /> : <Card className="p-10 text-center text-sm text-muted">No agents configured yet.{isAdmin ? <> Seed them from the <Link href="/admin" className="text-accent">admin dashboard</Link>.</> : null}</Card>
+          ) : (
+            <Card className="h-[560px] animate-pulse"><span className="sr-only">Loading pipeline…</span></Card>
+          )}
+          {current ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+              {overlay?.active ? <Radio size={12} className="text-accent" /> : <Activity size={12} />}
+              <span className="font-medium text-text">{current.command ?? "/auto"}</span>
+              <span className="truncate">{current.user_input}</span>
+              <Badge tone={runStatus === "SUCCEEDED" ? "success" : runStatus === "FAILED" ? "danger" : runStatus === "WAITING_FOR_USER" ? "warning" : "accent"}>{runStatus ?? current.status}</Badge>
+              <Link href={`/app/projects/${current.project_id}/chat/${current.conversation_id}`} className="ml-auto flex items-center gap-1 text-accent">Open chat <ExternalLink size={12} /></Link>
+            </div>
+          ) : null}
+        </div>
         <div className="space-y-3">
           <Card>
             <CardTitle>{selected ? selected.name : "Select a node"}</CardTitle>
@@ -83,21 +125,34 @@ export default function NodesPage() {
                 <div className="flex flex-wrap gap-1">{selected.tools.map((t) => <Badge key={t}>{t}</Badge>)}{selected.tools.length === 0 ? <span className="text-xs text-faint">no tools bound</span> : null}</div>
                 <div>
                   <p className="mb-1 text-xs text-muted">Hands off to</p>
-                  <ul className="text-xs">{graph?.edges.filter((e) => e.source === selected.id).map((e) => { const t = graph.nodes.find((n) => n.id === e.target); return <li key={e.target}>{t?.command} {e.is_failure_route ? <Badge tone="danger">failure route</Badge> : null} <span className="text-faint">{e.routing_hint}</span></li>; })}</ul>
+                  <ul className="space-y-0.5 text-xs">
+                    {graph?.edges.filter((e) => e.source === selected.id).map((e) => {
+                      const t = graph.nodes.find((n) => n.id === e.target);
+                      return <li key={e.target}><span className="font-mono text-accent">{t?.command}</span> {e.is_failure_route ? <Badge tone="danger">failure route</Badge> : null} <span className="text-faint">{e.routing_hint}</span></li>;
+                    })}
+                    {graph && graph.edges.filter((e) => e.source === selected.id).length === 0 ? <li className="text-faint">none — this agent ends the chain</li> : null}
+                  </ul>
                 </div>
+                {overlay?.statuses[selected.slug] ? <p className="text-xs">In this run: <Badge>{overlay.statuses[selected.slug]}</Badge></p> : null}
                 {isAdmin ? <Link href={`/admin/agents/${selected.id}`} className="inline-block text-xs text-accent">Open in admin editor →</Link> : null}
               </div>
-            ) : <p className="text-xs text-muted">Click a node to see its model, tools, skills and handoffs.</p>}
+            ) : <p className="text-xs text-muted">Click a node to see its model, tools, skills and handoffs. Hover to highlight its connections. Drag to pan, scroll to zoom.</p>}
           </Card>
           <Card>
-            <CardTitle>How a run flows</CardTitle>
-            <ol className="list-decimal space-y-1 pl-4 text-xs text-muted">
-              <li>Parse the slash command (or route via the Manager).</li>
-              <li>Load context: project summary, brand config, assets, approved artifacts, recent turns.</li>
-              <li>Run the agent version with its skills and only its bound tools.</li>
-              <li>Persist every produced file as a versioned artifact; QC can send work back once.</li>
-              <li>Save the reply to the chat — every step is streamed live and replayable.</li>
-            </ol>
+            <CardTitle>Recent runs</CardTitle>
+            {runs.length === 0 ? <p className="text-xs text-muted">No runs yet — start one from Home.</p> : null}
+            <ul className="space-y-1">
+              {runs.slice(0, 8).map((r) => (
+                <li key={r.id}>
+                  <button onClick={() => setRunId(r.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-surface-2 ${runId === r.id ? "bg-accent-soft" : ""}`}>
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${r.status === "SUCCEEDED" ? "bg-success" : r.status === "FAILED" ? "bg-danger" : r.status === "WAITING_FOR_USER" ? "bg-warning" : "bg-info"}`} />
+                    <span className="font-mono text-accent">{r.command ?? "/auto"}</span>
+                    <span className="truncate text-muted">{r.user_input}</span>
+                    <span className="ml-auto shrink-0 text-faint">{r.agent_slugs.length} agents</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </Card>
         </div>
       </div>

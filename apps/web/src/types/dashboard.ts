@@ -53,3 +53,18 @@ export interface ProfileOut {
   counts: { projects: number; conversations: number; artifacts: number };
   joined_at: string;
 }
+
+export interface RecentRun {
+  id: string;
+  status: string;
+  command: string | null;
+  user_input: string;
+  conversation_id: string;
+  conversation_title: string;
+  project_id: string;
+  project_name: string;
+  created_at: string;
+  finished_at: string | null;
+  node_statuses: Record<string, string>;
+  agent_slugs: string[];
+}
