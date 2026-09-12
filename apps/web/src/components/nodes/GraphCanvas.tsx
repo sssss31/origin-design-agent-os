@@ -44,12 +44,21 @@ export function GraphCanvas({ graph, selected, onSelect, overlay }: { graph: Age
   }, []);
 
   const fit = useCallback(() => {
-    const k = Math.min(1.1, Math.max(0.35, Math.min((size.w - 40) / width, (size.h - 40) / height)));
-    setView({ k, x: (size.w - width * k) / 2, y: (size.h - height * k) / 2 });
+    const rect = container.current?.getBoundingClientRect();
+    const w = rect?.width || size.w;
+    const h = rect?.height || size.h;
+    const k = Math.min(1.1, Math.max(0.25, Math.min((w - 32) / width, (h - 32) / height)));
+    setView({ k, x: (w - width * k) / 2, y: (h - height * k) / 2 });
   }, [size, width, height]);
   useEffect(() => {
     const id = requestAnimationFrame(fit);
-    return () => cancelAnimationFrame(id);
+    const late = setTimeout(fit, 250); // after fonts/columns settle
+    window.addEventListener("resize", fit);
+    return () => {
+      cancelAnimationFrame(id);
+      clearTimeout(late);
+      window.removeEventListener("resize", fit);
+    };
   }, [fit]);
 
   const zoomBy = (factor: number, cx = size.w / 2, cy = size.h / 2) =>

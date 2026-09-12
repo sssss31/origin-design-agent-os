@@ -62,8 +62,11 @@ export function layoutGraph(graph: AgentGraph): { placed: Placed[]; width: numbe
     const top = (height - total) / 2;
     nodes.forEach((n, i) => placed.push({ node: n, layer: l, x: 60 + l * (NODE_W + GAP_X), y: top + i * (NODE_H + GAP_Y) }));
   }
-  const width = 120 + layers.length * (NODE_W + GAP_X);
-  return { placed, width: Math.max(width, 600), height: Math.max(height, 360) };
+  // extent from real positions (+ room for return loops drawn under the rows)
+  const maxX = Math.max(0, ...placed.map((p) => p.x + NODE_W));
+  const maxY = Math.max(0, ...placed.map((p) => p.y + NODE_H));
+  const hasBack = graph.edges.some((e) => e.is_failure_route);
+  return { placed, width: Math.max(maxX + 60, 600), height: Math.max(maxY + (hasBack ? 110 : 60), 360) };
 }
 
 /** Cubic bezier between the right edge of `a` and the left edge of `b`; back-edges loop underneath. */
