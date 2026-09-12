@@ -35,7 +35,12 @@ async def test_quickstart_recents_library_graph_profile(app, make_user) -> None:
     manager = next(n for n in graph["nodes"] if n["is_manager"])
     assert len([e for e in graph["edges"] if e["source"] == manager["id"]]) == 7
     runs = (await admin.get("/api/v1/runs/recent")).json()
-    assert len(runs) == 2 and runs[0]["command"] == "/qc" and runs[0]["agent_slugs"] == ["qc"] and runs[0]["node_statuses"]["qc"] == "SUCCEEDED"
+    assert (
+        len(runs) == 2
+        and runs[0]["command"] == "/qc"
+        and runs[0]["agent_slugs"] == ["qc"]
+        and runs[0]["node_statuses"]["qc"] == "SUCCEEDED"
+    )
     profile = (await admin.get("/api/v1/me/profile")).json()
     assert profile["role"] == "admin" and profile["counts"]["conversations"] == 2
     # members of another organization see nothing
