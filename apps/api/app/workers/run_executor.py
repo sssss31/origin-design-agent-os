@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.adapters.registry import Adapters
+from app.adapters.tools_http import HttpApiExecutor
 from app.core.config import Settings
 from app.core.logging import get_logger, redact
 from app.domain.events import EventType, SafeEventPayload
@@ -458,6 +459,19 @@ class RunExecutor:
             settings={},
         )
         executor = tool_registry.bound_executor(tool_ctx)
+        http_executor = HttpApiExecutor(
+            self.session_factory,
+            self.adapters.secrets,
+            self.settings,
+            transport=getattr(self.adapters, "http_transport", None),
+            context={
+                "workspace_id": str(run.workspace_id),
+                "project_id": str(run.project_id),
+                "conversation_id": str(run.conversation_id),
+                "run_id": str(run.id),
+                "agent": agent.slug,
+            },
+        )
         artifact_service = ArtifactService(session, None, self.adapters.storage)
 
         async def invoke_tool(slug: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -502,8 +516,10 @@ class RunExecutor:
                 input_schema=tv.input_schema if tv else spec.input_schema,
                 output_schema=tv.output_schema if tv else None,
                 timeout_seconds=tv.timeout_seconds if tv else 60,
+                config=dict(tv.config) if tv else {},
             )
-            if row.executor_type != "internal_function" or not tool_registry.has(slug):
+            is_http = row.executor_type == "http_api" and bool(tool_spec.config.get("integration_id"))
+            if not is_http and (row.executor_type != "internal_function" or not tool_registry.has(slug)):
                 result_payload: dict[str, Any] = {
                     "ok": False,
                     "error": "executor_unavailable",
@@ -516,9 +532,8 @@ class RunExecutor:
                 )
                 await recorder.commit()
                 return result_payload
-            result = await executor.execute(
-                ToolCall(tool=tool_spec, arguments=args, run_id=str(run.id), node_run_id=str(node.id))
-            )
+            call = ToolCall(tool=tool_spec, arguments=args, run_id=str(run.id), node_run_id=str(node.id))
+            result = await (http_executor.execute(call) if is_http else executor.execute(call))
             artifact_ids: list[str] = []
             for file in result.files:
                 if not isinstance(file, ProducedFile):

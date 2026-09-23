@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agents import Agent, AgentVersion
+from app.models.integrations import CustomIntegration
 from app.models.providers import AIProvider
 from app.models.skills import Skill, SkillVersion
 from app.models.tools import Tool, ToolVersion
@@ -29,6 +30,7 @@ from app.schemas.admin import (
     ToolVersionOut,
 )
 from app.schemas.common import from_orm
+from app.schemas.integrations import IntegrationOut, IntegrationSecretOut
 
 
 def provider_out(p: AIProvider) -> ProviderOut:
@@ -55,6 +57,23 @@ def provider_out(p: AIProvider) -> ProviderOut:
 
 def _tool_version_out(v: ToolVersion) -> ToolVersionOut:
     return from_orm(ToolVersionOut, v, has_secret=v.secret_ref_id is not None)
+
+
+def integration_out(
+    i: CustomIntegration, *, tool_slug: str | None = None, used_by: list[str] | None = None
+) -> IntegrationOut:
+    from app.services.integrations import missing_secrets_of, variables_of
+
+    return from_orm(
+        IntegrationOut,
+        i,
+        secrets=[from_orm(IntegrationSecretOut, s) for s in i.secrets],
+        variables=variables_of(i),
+        missing_secrets=missing_secrets_of(i),
+        tool_slug=tool_slug,
+        used_by=used_by or [],
+        avg_latency_ms=int(i.total_latency_ms / i.request_count) if i.request_count else None,
+    )
 
 
 def tool_out(t: Tool) -> ToolOut:

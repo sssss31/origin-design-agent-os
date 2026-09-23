@@ -7,6 +7,7 @@ and add the literal to the matching `Settings` field. Nothing else changes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,6 +32,7 @@ class Adapters:
     embeddings: EmbeddingProvider
     runners: dict[str, AgentRunner]
     providers: dict[str, AIProvider] = field(default_factory=dict)
+    http_transport: Any = None  # tests inject an httpx.MockTransport for custom integrations
 
     async def health(self) -> dict[str, bool]:
         return {

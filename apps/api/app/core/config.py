@@ -82,6 +82,15 @@ class Settings(BaseSettings):
     # --- providers (single-provider V0 convenience; admin-managed providers override) -
     openai_api_key: str | None = None
     openai_agents_trace_include_sensitive_data: bool = False
+    # --- outbound HTTP (custom REST integrations) --------------------------------------
+    outbound_allow_http: bool = Field(
+        default=False, description="Allow plain http endpoints for custom integrations (never in production)."
+    )
+    outbound_allowed_hosts: str = Field(
+        default="", description="Comma-separated host allowlist; empty = any public host."
+    )
+    outbound_max_response_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)
+    outbound_default_timeout_seconds: int = Field(default=30, ge=1, le=300)
     provider_retry_attempts: int = Field(
         default=3, ge=1, le=6, description="Bounded retries for retryable provider errors."
     )
@@ -100,6 +109,10 @@ class Settings(BaseSettings):
     @property
     def is_production_like(self) -> bool:
         return self.app_env in {"staging", "production"}
+
+    @property
+    def outbound_allowed_hosts_list(self) -> list[str]:
+        return [h.strip() for h in self.outbound_allowed_hosts.split(",") if h.strip()]
 
     @property
     def cors_origins(self) -> list[str]:
@@ -132,6 +145,8 @@ class Settings(BaseSettings):
             problems.append("EVENT_BUS_BACKEND=memory is not allowed with multiple API replicas; use redis")
         if "*" in self.cors_origins:
             problems.append("ALLOWED_ORIGINS must not contain '*'")
+        if self.outbound_allow_http:
+            problems.append("OUTBOUND_ALLOW_HTTP must be false; custom integrations must use https")
         if self.bootstrap_admin_password:
             problems.append("BOOTSTRAP_ADMIN_PASSWORD must not be set; use `origin-cli bootstrap-admin`")
         if problems:

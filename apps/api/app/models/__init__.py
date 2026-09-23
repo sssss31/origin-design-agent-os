@@ -5,6 +5,7 @@ from app.models.chat import Conversation, Message, MessageAttachment
 from app.models.files import Artifact, ArtifactVersion, Asset, AssetVersion
 from app.models.governance import AuditLog, SecretRef
 from app.models.identity import Organization, OrganizationMember, RefreshToken, User
+from app.models.integrations import CustomIntegration, IntegrationSecret
 from app.models.providers import AIProvider, ProviderModel
 from app.models.skills import Skill, SkillFile, SkillVersion
 from app.models.tools import Tool, ToolPermission, ToolVersion
@@ -41,6 +42,8 @@ __all__ = [
     "WorkflowRun",
     "WorkflowVersion",
     "AuditLog",
+    "CustomIntegration",
+    "IntegrationSecret",
     "Organization",
     "OrganizationMember",
     "Project",
