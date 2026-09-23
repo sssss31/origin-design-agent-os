@@ -16,10 +16,14 @@ Status = Literal["draft", "active", "disabled"]
 
 
 # ----------------------------------------------------------------------------- providers
+Environment = Literal["production", "staging", "development"]
+
+
 class ProviderCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     slug: str | None = Slug
     type: Literal["openai", "echo"] = "openai"
+    environment: Environment = "production"
     base_url: str | None = Field(default=None, max_length=300)
     default_model: str | None = Field(default=None, max_length=120)
     metadata_json: dict[str, Any] = Field(default_factory=dict)
@@ -29,6 +33,7 @@ class ProviderCreate(BaseModel):
 
 class ProviderUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
+    environment: Environment | None = None
     base_url: str | None = Field(default=None, max_length=300)
     default_model: str | None = Field(default=None, max_length=120)
     metadata_json: dict[str, Any] | None = None
@@ -59,6 +64,7 @@ class ProviderModelOut(ORMModel):
     model: str
     display_name: str | None
     capabilities: dict[str, Any]
+    resolved_capabilities: dict[str, Any] = Field(default_factory=dict)
     enabled: bool
 
 
@@ -70,7 +76,10 @@ class ProviderOut(ORMModel):
     type: str
     base_url: str | None
     has_secret: bool
+    configured: bool
     secret_fingerprint: str | None
+    key_preview: str | None
+    environment: str
     metadata_json: dict[str, Any]
     enabled: bool
     default_model: str | None
@@ -81,6 +90,34 @@ class ProviderOut(ORMModel):
     created_at: datetime
     updated_at: datetime
     models: list[ProviderModelOut] = Field(default_factory=list)
+
+
+class ProviderStatusOut(BaseModel):
+    """Spec §2 contract: never more than a masked preview."""
+
+    provider: str
+    provider_id: uuid.UUID | None
+    name: str | None
+    configured: bool
+    key_preview: str | None
+    status: str
+    environment: str | None
+    enabled: bool
+    last_tested_at: datetime | None
+    models: list[str] = Field(default_factory=list)
+    used_by: list[str] = Field(default_factory=list)
+
+
+class ProviderConnectionOut(BaseModel):
+    """Spec §3 contract for POST /admin/providers/openai/test."""
+
+    success: bool
+    provider: str
+    status: Literal["connected", "failed", "not_configured"]
+    message: str
+    latency_ms: int
+    available_models: list[str] = Field(default_factory=list)
+    tested_at: datetime
 
 
 class ProviderTestOut(BaseModel):

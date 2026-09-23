@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     # --- providers (single-provider V0 convenience; admin-managed providers override) -
     openai_api_key: str | None = None
     openai_agents_trace_include_sensitive_data: bool = False
+    provider_retry_attempts: int = Field(
+        default=3, ge=1, le=6, description="Bounded retries for retryable provider errors."
+    )
+    provider_retry_backoff_seconds: float = Field(default=0.5, ge=0.0, le=10.0)
 
     # --- observability ---------------------------------------------------------------
     log_level: str = "INFO"

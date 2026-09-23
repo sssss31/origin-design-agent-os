@@ -32,7 +32,16 @@ async def test_provider_secret_is_write_only_and_encrypted(app, make_user, monke
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["has_secret"] is True and body["secret_fingerprint"].startswith("…")
+    assert body["configured"] is True and body["key_preview"] == "sk-••••••••cdef"
+    assert body["environment"] == "production"
     assert "sk-test" not in res.text and "api_key" not in body
+
+    # spec §2/§3 contracts by provider type: masked preview only, sanitized connection result
+    status_res = await admin.get(f"{BASE}/providers/openai/status")
+    assert status_res.status_code == 200, status_res.text
+    st = status_res.json()
+    assert st == {**st, "provider": "openai", "configured": True, "key_preview": "sk-••••••••cdef"}
+    assert "sk-test-1234567890abcdef" not in status_res.text
 
     async with app.state.session_factory() as session:
         ref = (await session.scalars(select(SecretRef))).one()
@@ -65,6 +74,14 @@ async def test_provider_secret_is_write_only_and_encrypted(app, make_user, monke
     assert res.json()["ok"] is True and res.json()["available_models"] == ["gpt-a", "gpt-b", "gpt-vision"]
     assert seen["key"] == "sk-test-rotated-0000000000"
     assert "sk-test" not in res.text
+    by_type = await admin.post(f"{BASE}/providers/openai/test")
+    assert by_type.status_code == 200, by_type.text
+    assert (
+        by_type.json()["success"] is True
+        and by_type.json()["status"] == "connected"
+        and by_type.json()["provider"] == "openai"
+    )
+    assert "sk-test" not in by_type.text
 
     got = await admin.get(f"{BASE}/providers/{provider['id']}")
     assert got.json()["health_status"] == "ok" and got.json()["last_tested_at"]
@@ -387,3 +404,39 @@ async def test_agent_command_validation(make_user, command: str) -> None:  # typ
     admin = await make_user("admin@example.com", role=Role.ADMIN)
     res = await admin.post(f"{BASE}/agents", json={"name": "X", "command": command})
     assert res.status_code == 422
+
+
+async def test_provider_delete_refused_while_in_use_and_secret_removal(app, make_user) -> None:  # type: ignore[no-untyped-def]
+    from app.models.governance import SecretRef
+    from sqlalchemy import select
+
+    admin = await make_user("admin@example.com", role=Role.ADMIN)
+    provider = await _provider(admin, "openai", "OpenAI Production")
+    await admin.post(
+        f"{BASE}/providers/{provider['id']}/secret", json={"api_key": "sk-proj-abcdefghijklmnop7Xk2"}
+    )
+    agent = (
+        await admin.post(
+            f"{BASE}/agents",
+            json={
+                "name": "Master",
+                "command": "/master",
+                "version": {"instructions": "x", "provider_id": provider["id"], "model": "gpt-5"},
+            },
+        )
+    ).json()
+    refused = await admin.delete(f"{BASE}/providers/{provider['id']}")
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "provider_in_use"
+    assert "Master" in refused.json()["error"]["details"]
+    # removing the credential keeps the provider but drops the ciphertext
+    res = await admin.delete(f"{BASE}/providers/{provider['id']}/secret")
+    assert res.status_code == 200 and res.json()["configured"] is False and res.json()["key_preview"] is None
+    async with app.state.session_factory() as session:
+        assert (await session.scalars(select(SecretRef))).all() == []
+    # detach the agent's draft from the provider, then delete works
+    await admin.post(f"{BASE}/agents/{agent['id']}/versions", json={"provider_id": None})
+    assert (await admin.delete(f"{BASE}/providers/{provider['id']}")).status_code == 204
+    assert (await admin.get(f"{BASE}/providers/openai/status")).json()["configured"] is False
+    # non-admins cannot reach any provider endpoint
+    member = await make_user("m@example.com", role=Role.MEMBER)
+    assert (await member.get(f"{BASE}/providers/openai/status")).status_code == 403

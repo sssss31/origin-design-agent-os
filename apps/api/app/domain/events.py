@@ -28,6 +28,7 @@ class EventType(StrEnum):
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
     RUN_CANCELLED = "run.cancelled"
+    PROVIDER_RETRY = "provider.retry"
     HEARTBEAT = "heartbeat"
 
 
@@ -61,6 +62,7 @@ class SafeEventPayload(BaseModel):
     duration_ms: int | None = None
     findings_count: int | None = None
     qc_passed: bool | None = None
+    retry_attempt: int | None = None
 
 
 class ExecutionEvent(BaseModel):

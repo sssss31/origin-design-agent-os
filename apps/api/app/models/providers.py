@@ -29,6 +29,12 @@ class AIProvider(UUIDPrimaryKeyMixin, TimestampMixin, AuditedMixin, Base):
         Uuid, ForeignKey("secret_refs.id", ondelete="SET NULL"), nullable=True
     )
     secret_fingerprint: Mapped[str | None] = mapped_column(String(16), nullable=True, comment="display only")
+    key_preview: Mapped[str | None] = mapped_column(
+        String(48), nullable=True, comment="masked form e.g. sk-proj-••••••••7Xk2; never the value"
+    )
+    environment: Mapped[str] = mapped_column(
+        String(20), default="production", nullable=False, comment="production | staging | development"
+    )
     metadata_json: Mapped[dict] = mapped_column(
         JSONB, default=dict, nullable=False, comment="org/project ids etc."
     )

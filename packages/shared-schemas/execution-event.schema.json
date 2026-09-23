@@ -16,6 +16,7 @@
         "run.completed",
         "run.failed",
         "run.cancelled",
+        "provider.retry",
         "heartbeat"
       ],
       "title": "EventType",
@@ -287,6 +288,18 @@
           ],
           "default": null,
           "title": "Question Schema"
+        },
+        "retry_attempt": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry Attempt"
         },
         "retryable": {
           "anyOf": [

@@ -66,7 +66,7 @@ function ProviderCard({ provider: p, onChange }: { provider: ProviderOut; onChan
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-2 rounded-md border border-border p-3">
-          <p className="text-xs font-medium">Credential {p.has_secret ? <Badge tone="success">stored {p.secret_fingerprint}</Badge> : <Badge tone="warning">missing</Badge>}</p>
+          <p className="text-xs font-medium">Credential {p.has_secret ? <Badge tone="success">{p.key_preview ?? "stored"}</Badge> : <Badge tone="warning">missing</Badge>}</p>
           <Input type="password" autoComplete="off" placeholder={p.has_secret ? "Rotate: paste a new API key" : "Paste API key (write-only)"} value={key} onChange={(e) => setKey(e.target.value)} />
           <div className="flex gap-2">
             <Button disabled={key.length < 8} onClick={() => void run(async () => { onChange(await providersApi.setSecret(p.id, key)); setKey(""); }, setError)}>{p.has_secret ? "Rotate key" : "Save key"}</Button>

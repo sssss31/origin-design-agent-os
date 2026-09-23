@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,11 +17,20 @@ from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.core.logging import redact
 from app.domain.slugs import slugify
 from app.models.providers import AIProvider, ProviderModel
-from app.ports.secrets import SecretStore
+from app.ports.secrets import SecretStore, key_preview
+from app.providers.base import AIProvider as ProviderAdapter
 from app.schemas.admin import ProviderCreate, ProviderModelsSet, ProviderTestOut, ProviderUpdate
 from app.services import audit
 
 DEFAULT_BASE_URLS = {"openai": "https://api.openai.com/v1"}
+
+
+def provider_adapters() -> dict[str, ProviderAdapter]:
+    """Registered provider adapters by type (see app/adapters/registry.py)."""
+    from app.adapters.registry import build_providers
+    from app.core.config import get_settings
+
+    return build_providers(get_settings())
 
 
 @dataclass(slots=True)
@@ -32,26 +41,12 @@ class ProbeResult:
 
 
 async def probe_provider(provider_type: str, base_url: str | None, api_key: str | None) -> ProbeResult:
-    """Minimal authenticated request. Returns status metadata only, never the key."""
-    if provider_type == "echo":
-        return ProbeResult(ok=True, message="echo provider is always available", models=["echo-1"])
-    if provider_type == "openai":
-        if not api_key:
-            return ProbeResult(ok=False, message="no API key stored for this provider")
-        url = (base_url or DEFAULT_BASE_URLS["openai"]).rstrip("/") + "/models"
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                res = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
-        except httpx.HTTPError as exc:
-            return ProbeResult(ok=False, message=f"connection failed: {redact(str(exc))[:200]}")
-        if res.status_code != 200:
-            return ProbeResult(ok=False, message=f"provider returned HTTP {res.status_code}")
-        try:
-            models = sorted(str(m.get("id")) for m in res.json().get("data", []) if m.get("id"))
-        except ValueError:
-            models = []
-        return ProbeResult(ok=True, message=f"authenticated; {len(models)} models visible", models=models)
-    return ProbeResult(ok=False, message=f"unsupported provider type {provider_type!r}")
+    """Minimal authenticated request through the provider adapter. Never returns the key."""
+    adapter = provider_adapters().get(provider_type)
+    if adapter is None:
+        return ProbeResult(ok=False, message=f"unsupported provider type {provider_type!r}")
+    result = await adapter.test_connection({"base_url": base_url}, api_key)
+    return ProbeResult(ok=result.ok, message=result.message, models=result.models)
 
 
 def _snapshot(p: AIProvider) -> dict:
@@ -63,6 +58,8 @@ def _snapshot(p: AIProvider) -> dict:
         "default_model": p.default_model,
         "rate_limit_policy": p.rate_limit_policy,
         "secret_fingerprint": p.secret_fingerprint,
+        "key_preview": p.key_preview,
+        "environment": p.environment,
     }
 
 
@@ -124,6 +121,7 @@ class ProviderService:
             metadata_json=data.metadata_json,
             rate_limit_policy=data.rate_limit_policy,
             enabled=data.enabled,
+            environment=data.environment,
             created_by=self.ctx.user_id,
             updated_by=self.ctx.user_id,
         )
@@ -151,6 +149,7 @@ class ProviderService:
             handle = await secrets.store(f"provider:{row.slug}", api_key)
             row.secret_ref_id = uuid.UUID(handle.ref)
         row.secret_fingerprint = handle.fingerprint
+        row.key_preview = key_preview(api_key)
         row.health_status = "unknown"
         row.health_message = None
         row.updated_by = self.ctx.user_id
@@ -159,9 +158,72 @@ class ProviderService:
             "provider.secret_set",
             row.id,
             before=before,
-            after={"secret_fingerprint": handle.fingerprint, "secret_version": handle.version},
+            after={
+                "secret_fingerprint": handle.fingerprint,
+                "secret_version": handle.version,
+                "key_preview": row.key_preview,
+            },
         )
         return await self.get(row.id)
+
+    async def delete_secret(self, provider_id: uuid.UUID, secrets: SecretStore) -> AIProvider:
+        row = await self.get(provider_id)
+        before = {"key_preview": row.key_preview}
+        if row.secret_ref_id:
+            await secrets.delete(str(row.secret_ref_id))
+        row.secret_ref_id = None
+        row.secret_fingerprint = None
+        row.key_preview = None
+        row.health_status = "unknown"
+        row.health_message = "credential removed"
+        row.updated_by = self.ctx.user_id
+        await self.session.flush()
+        await self._audit("provider.secret_deleted", row.id, before=before, after={"key_preview": None})
+        return await self.get(row.id)
+
+    async def delete(self, provider_id: uuid.UUID, secrets: SecretStore) -> None:
+        """Remove a provider. Refused while an active/draft agent version still points at it."""
+        from app.models.agents import Agent, AgentVersion
+
+        row = await self.get(provider_id)
+        users = (
+            (
+                await self.session.execute(
+                    select(Agent.name)
+                    .join(AgentVersion, AgentVersion.agent_id == Agent.id)
+                    .where(
+                        AgentVersion.provider_id == row.id,
+                        (Agent.active_version_id == AgentVersion.id) | (AgentVersion.published_at.is_(None)),
+                    )
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if users:
+            raise Conflict(
+                f"Provider is used by agents: {', '.join(sorted(users))}. Reassign them first.",
+                code="provider_in_use",
+                details=sorted(users),
+            )
+        if row.secret_ref_id:
+            await secrets.delete(str(row.secret_ref_id))
+        snapshot = _snapshot(row)
+        await self.session.delete(row)
+        await self.session.flush()
+        await self._audit("provider.deleted", provider_id, before=snapshot)
+
+    async def agents_using(self, provider_id: uuid.UUID) -> Sequence[str]:
+        from app.models.agents import Agent, AgentVersion
+
+        rows = await self.session.execute(
+            select(Agent.name)
+            .join(AgentVersion, AgentVersion.agent_id == Agent.id)
+            .where(AgentVersion.provider_id == provider_id, Agent.active_version_id == AgentVersion.id)
+            .distinct()
+        )
+        return sorted(rows.scalars().all())
 
     async def test(self, provider_id: uuid.UUID, secrets: SecretStore) -> ProviderTestOut:
         row = await self.get(provider_id)

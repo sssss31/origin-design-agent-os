@@ -132,12 +132,25 @@ class OpenAIAgentsRunner:
         result = await Runner.run(sdk_agent, sdk_input, max_turns=max(1, agent.max_steps), run_config=config)
         duration_ms = int((time.perf_counter() - started) * 1000)
 
-        usage = {"input_tokens": 0, "output_tokens": 0, "duration_ms": duration_ms, "tool_calls": tool_calls}
+        usage = {
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "duration_ms": duration_ms,
+            "tool_calls": tool_calls,
+            "requests": 0,
+        }
         for raw in getattr(result, "raw_responses", []) or []:
             u = getattr(raw, "usage", None)
             if u is not None:
+                usage["requests"] += 1
                 usage["input_tokens"] += int(getattr(u, "input_tokens", 0) or 0)
                 usage["output_tokens"] += int(getattr(u, "output_tokens", 0) or 0)
+                in_details = getattr(u, "input_tokens_details", None)
+                out_details = getattr(u, "output_tokens_details", None)
+                usage["cached_input_tokens"] += int(getattr(in_details, "cached_tokens", 0) or 0)
+                usage["reasoning_tokens"] += int(getattr(out_details, "reasoning_tokens", 0) or 0)
         steps = len(getattr(result, "new_items", []) or [])
 
         if holder.get("question"):

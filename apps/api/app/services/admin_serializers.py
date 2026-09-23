@@ -32,11 +32,24 @@ from app.schemas.common import from_orm
 
 
 def provider_out(p: AIProvider) -> ProviderOut:
+    from app.services.providers import provider_adapters
+
+    adapter = provider_adapters().get(p.type)
     return from_orm(
         ProviderOut,
         p,
         has_secret=p.secret_ref_id is not None,
-        models=[from_orm(ProviderModelOut, m) for m in p.models],
+        configured=p.secret_ref_id is not None or p.type == "echo",
+        models=[
+            from_orm(
+                ProviderModelOut,
+                m,
+                resolved_capabilities=adapter.model_capabilities(m.model, m.capabilities).as_dict()
+                if adapter
+                else {},
+            )
+            for m in p.models
+        ],
     )
 
 

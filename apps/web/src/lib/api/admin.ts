@@ -6,7 +6,10 @@ import type {
   AgentTestOut,
   AgentVersionInput,
   CommandOut,
+  ModelCapabilities,
+  ProviderConnectionOut,
   ProviderOut,
+  ProviderStatusOut,
   ProviderTestOut,
   SkillOut,
   SkillVersionInput,
@@ -23,6 +26,11 @@ export const providersApi = {
     api<ProviderOut>(`${A}/providers/${id}`, { method: "PATCH", body }),
   setSecret: (id: string, api_key: string) => api<ProviderOut>(`${A}/providers/${id}/secret`, { method: "POST", body: { api_key } }),
   test: (id: string) => api<ProviderTestOut>(`${A}/providers/${id}/test`, { method: "POST" }),
+  status: (type: string) => api<ProviderStatusOut>(`${A}/providers/${type}/status`),
+  connectionTest: (ref: string) => api<ProviderConnectionOut>(`${A}/providers/${ref}/connection-test`, { method: "POST" }),
+  deleteSecret: (id: string) => api<ProviderOut>(`${A}/providers/${id}/secret`, { method: "DELETE" }),
+  remove: (id: string) => api<void>(`${A}/providers/${id}`, { method: "DELETE" }),
+  supportedModels: (id: string) => api<{ model: string; display_name: string; capabilities: ModelCapabilities }[]>(`${A}/providers/${id}/supported-models`),
   setModels: (id: string, models: { model: string; enabled?: boolean }[], default_model: string | null) =>
     api<ProviderOut>(`${A}/providers/${id}/models`, { method: "PUT", body: { models, default_model } }),
 };

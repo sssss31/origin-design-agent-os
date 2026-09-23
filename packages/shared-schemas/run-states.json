@@ -14,6 +14,7 @@
     "run.completed",
     "run.failed",
     "run.cancelled",
+    "provider.retry",
     "heartbeat"
   ],
   "node_states": [

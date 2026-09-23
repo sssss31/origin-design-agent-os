@@ -6,7 +6,7 @@ and add the literal to the matching `Settings` field. Nothing else changes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -18,6 +18,7 @@ from app.ports.runner import AgentRunner
 from app.ports.scheduler import WorkflowScheduler
 from app.ports.secrets import SecretStore
 from app.ports.storage import ObjectStorage
+from app.providers.base import AIProvider
 
 
 @dataclass(slots=True)
@@ -29,6 +30,7 @@ class Adapters:
     scheduler: WorkflowScheduler
     embeddings: EmbeddingProvider
     runners: dict[str, AgentRunner]
+    providers: dict[str, AIProvider] = field(default_factory=dict)
 
     async def health(self) -> dict[str, bool]:
         return {
@@ -112,21 +114,28 @@ def build_embeddings(settings: Settings) -> EmbeddingProvider:
     return NullEmbeddings()
 
 
-def build_runners(settings: Settings) -> dict[str, AgentRunner]:
-    """Provider type → runner. Provider rows (Phase 2) pick one of these by `type`."""
-    from app.adapters.runners.echo import EchoRunner
-    from app.adapters.runners.openai_agents import OpenAIAgentsRunner
+def build_providers(settings: Settings) -> dict[str, AIProvider]:
+    """Provider type → adapter. Provider rows pick one of these by `type`; add new vendors here."""
+    from app.providers.echo_provider import EchoProvider
+    from app.providers.openai_provider import OpenAIProvider
 
-    runners: dict[str, AgentRunner] = {
-        "echo": EchoRunner(),
-        "openai": OpenAIAgentsRunner(
-            trace_include_sensitive_data=settings.openai_agents_trace_include_sensitive_data
+    return {
+        "echo": EchoProvider(),
+        "openai": OpenAIProvider(
+            trace_include_sensitive_data=settings.openai_agents_trace_include_sensitive_data,
+            max_attempts=settings.provider_retry_attempts,
+            backoff_seconds=settings.provider_retry_backoff_seconds,
         ),
     }
-    return runners
+
+
+def build_runners(settings: Settings) -> dict[str, AgentRunner]:
+    """Kept for callers that only need the raw runner; derived from the provider adapters."""
+    return {t: p.runner for t, p in build_providers(settings).items()}
 
 
 def build_adapters(settings: Settings, session_factory: async_sessionmaker[AsyncSession]) -> Adapters:
+    providers = build_providers(settings)
     return Adapters(
         storage=build_storage(settings),
         secrets=build_secret_store(settings, session_factory),
@@ -134,5 +143,6 @@ def build_adapters(settings: Settings, session_factory: async_sessionmaker[Async
         events=build_event_bus(settings),
         scheduler=build_scheduler(settings),
         embeddings=build_embeddings(settings),
-        runners=build_runners(settings),
+        runners={t: p.runner for t, p in providers.items()},
+        providers=providers,
     )

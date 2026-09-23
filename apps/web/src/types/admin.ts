@@ -2,12 +2,51 @@
 
 export type EntityStatus = "draft" | "active" | "disabled";
 
+export interface ModelCapabilities {
+  supports_temperature: boolean;
+  supports_top_p: boolean;
+  supports_reasoning: boolean;
+  supports_vision: boolean;
+  supports_tools: boolean;
+  supports_structured_output: boolean;
+  supports_image_generation: boolean;
+  max_output_tokens_param: string | null;
+  context_window: number | null;
+  max_output_tokens: number | null;
+  notes: string;
+}
+
 export interface ProviderModelOut {
   id: string;
   model: string;
   display_name: string | null;
   capabilities: Record<string, unknown>;
+  resolved_capabilities: Partial<ModelCapabilities>;
   enabled: boolean;
+}
+
+export interface ProviderStatusOut {
+  provider: string;
+  provider_id: string | null;
+  name: string | null;
+  configured: boolean;
+  key_preview: string | null;
+  status: "connected" | "failed" | "untested" | "not_configured";
+  environment: string | null;
+  enabled: boolean;
+  last_tested_at: string | null;
+  models: string[];
+  used_by: string[];
+}
+
+export interface ProviderConnectionOut {
+  success: boolean;
+  provider: string;
+  status: "connected" | "failed" | "not_configured";
+  message: string;
+  latency_ms: number;
+  available_models: string[];
+  tested_at: string;
 }
 
 export interface ProviderOut {
@@ -18,7 +57,10 @@ export interface ProviderOut {
   type: "openai" | "echo" | string;
   base_url: string | null;
   has_secret: boolean;
+  configured: boolean;
   secret_fingerprint: string | null;
+  key_preview: string | null;
+  environment: "production" | "staging" | "development";
   metadata_json: Record<string, unknown>;
   enabled: boolean;
   default_model: string | null;

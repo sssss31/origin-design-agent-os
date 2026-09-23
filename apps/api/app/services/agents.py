@@ -22,6 +22,7 @@ from app.models.skills import Skill
 from app.models.tools import Tool
 from app.models.workspace import Project, Workspace
 from app.ports.runner import RunInput
+from app.providers.base import ProviderError
 from app.schemas.admin import (
     AgentCreate,
     AgentTestOut,
@@ -561,12 +562,29 @@ class AgentService:
         resolved = await build_runtime_agent(
             self.session, agent, version, organization=organization, workspace=workspace, project=project
         )
-        runner = adapters.runners.get(resolved.provider.type)
-        if runner is None:
+        provider_adapter = adapters.providers.get(resolved.provider.type)
+        if provider_adapter is None:
             raise ServiceUnavailable(
                 f"No runtime registered for provider type '{resolved.provider.type}' yet",
                 code="runner_unavailable",
             )
+        runner = provider_adapter.runner
+        credentials: dict[str, str] = {}
+        if resolved.provider.secret_ref_id:
+            try:
+                credentials["api_key"] = await adapters.secrets.reveal(str(resolved.provider.secret_ref_id))
+            except LookupError as exc:
+                raise ServiceUnavailable(
+                    "The provider credential cannot be read", code="provider_secret_unavailable"
+                ) from exc
+        if resolved.provider.base_url:
+            credentials["base_url"] = resolved.provider.base_url
+        if resolved.provider.type != "echo" and not credentials.get("api_key"):
+            raise ServiceUnavailable(
+                "Provider has no API key configured. Add one under Admin → API Integrations.",
+                code="provider_secret_unavailable",
+            )
+        resolved.runtime.provider_credentials = credentials
 
         async def invoke_tool(slug: str, args: dict[str, Any]) -> dict[str, Any]:
             # Sandbox test never executes real tools; it records the call.
@@ -576,9 +594,12 @@ class AgentService:
             return None
 
         started = time.perf_counter()
-        outcome = await runner.run(
-            resolved.runtime, RunInput(user_input=data.input), invoke_tool=invoke_tool, emit=emit
-        )
+        try:
+            outcome = await provider_adapter.execute(
+                resolved.runtime, RunInput(user_input=data.input), invoke_tool=invoke_tool, emit=emit
+            )
+        except ProviderError as exc:
+            raise ServiceUnavailable(exc.message, code=exc.code) from exc
         duration = int((time.perf_counter() - started) * 1000)
         await self._audit(
             "agent.tested",

@@ -34,6 +34,7 @@ from app.models.workspace import Project, Workspace
 from app.ports.queue import Job
 from app.ports.runner import ProducedFile, RunInput, RunOutcome
 from app.ports.tools import ToolCall, ToolSpec
+from app.providers.base import ProviderError
 from app.services.agent_factory import build_runtime_agent
 from app.services.artifacts import ArtifactService
 from app.services.context import build_context
@@ -387,9 +388,11 @@ class RunExecutor:
         except Exception as exc:
             raise NodeFailure("agent_not_configured", redact(str(exc))[:300]) from exc
         runtime = resolved.runtime
-        runner = self.adapters.runners.get(resolved.provider.type)
-        if runner is None:
+        provider_adapter = self.adapters.providers.get(resolved.provider.type)
+        if provider_adapter is None:
             raise NodeFailure("runner_unavailable", f"no runtime for provider type {resolved.provider.type}")
+        if not resolved.provider.enabled:
+            raise NodeFailure("provider_disabled", f"provider '{resolved.provider.name}' is disabled")
         credentials: dict[str, str] = {}
         if resolved.provider.secret_ref_id:
             try:
@@ -402,6 +405,11 @@ class RunExecutor:
                 ) from exc
         if resolved.provider.base_url:
             credentials["base_url"] = resolved.provider.base_url
+        if resolved.provider.type != "echo" and not credentials.get("api_key"):
+            raise NodeFailure(
+                "provider_secret_unavailable",
+                "Agent temporarily unavailable. Provider connection failed (no API key configured).",
+            )
         runtime.provider_credentials = credentials
         await recorder.add(
             EventType.AGENT_STARTED,
@@ -560,7 +568,19 @@ class RunExecutor:
             return {"ok": True, **result.output, **({"artifact_ids": artifact_ids} if artifact_ids else {})}
 
         async def emit(event_type: str, payload: dict[str, Any]) -> None:
-            return None
+            if event_type == "provider.retry":
+                await recorder.add(
+                    EventType.PROVIDER_RETRY,
+                    SafeEventPayload(
+                        node_id=node.node_id,
+                        agent_slug=agent.slug,
+                        retry_attempt=int(payload.get("attempt", 0)),
+                        error_code=str(payload.get("code", "")),
+                        error_message="OpenAI request failed. Retrying…",
+                    ),
+                    node_run_id=node.id,
+                )
+                await recorder.commit()
 
         run_input = RunInput(
             user_input=run.input_json.get("body") or run.user_input,
@@ -570,10 +590,14 @@ class RunExecutor:
             attachments=list(run.input_json.get("attachments", [])),
         )
         started = datetime.now(UTC)
-        outcome: RunOutcome = await asyncio.wait_for(
-            runner.run(runtime, run_input, invoke_tool=invoke_tool, emit=emit),
-            timeout=version.timeout_seconds,
-        )
+        try:
+            outcome: RunOutcome = await asyncio.wait_for(
+                provider_adapter.execute(runtime, run_input, invoke_tool=invoke_tool, emit=emit),
+                timeout=version.timeout_seconds,
+            )
+        except ProviderError as exc:
+            # technical detail was logged by the adapter; the user sees a sanitized message
+            raise NodeFailure(exc.code, exc.message, retryable=exc.retryable) from exc
         duration_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
         session.add(
             ApiUsage(
