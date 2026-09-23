@@ -60,11 +60,12 @@ export default function ChatPage() {
         collected.push(e);
         setEventsByRun((prev) => ({ ...prev, [runId]: [...collected] }));
         if (e.type === "artifact.created" || e.type === "run.completed" || e.type === "clarification.received") void loadMessages();
+        if (e.type === "run.completed") conversationsApi.get(conversationId).then(setConversation).catch(() => undefined);
       },
       onEnd: () => void loadMessages(),
     });
     return () => sse.current?.close();
-  }, [runId, loadMessages]);
+  }, [runId, loadMessages, conversationId]);
 
   const busy = Boolean(timeline && !timeline.terminal && timeline.runStatus !== "WAITING_FOR_USER");
 
@@ -73,6 +74,7 @@ export default function ChatPage() {
     try {
       const created = await runsApi.create(conversationId, { content, selected_asset_ids: assetIds });
       await loadMessages();
+      conversationsApi.get(conversationId).then(setConversation).catch(() => undefined);
       void loadSidebar();
       window.dispatchEvent(new Event(RECENTS_CHANGED));
       setRunId(created.run_id);
@@ -116,7 +118,16 @@ export default function ChatPage() {
             <ErrorText>{error}</ErrorText>
           </div>
           <ChatThread messages={messages} activeRunId={runId} onOpenRun={setRunId} />
-          <Composer assets={assets} busy={busy} onSend={send} onStop={runId ? () => void act(() => runsApi.cancel(runId)) : undefined} />
+          <Composer
+            assets={assets}
+            busy={busy}
+            onSend={send}
+            onStop={runId ? () => void act(() => runsApi.cancel(runId)) : undefined}
+            activeAgent={conversation?.active_agent ?? null}
+            memoryTurns={conversation?.memory.find((m) => m.agent_id === conversation.active_agent?.id)?.turns ?? 0}
+            onActivate={(command) => act(async () => setConversation(await conversationsApi.setActiveAgent(conversationId, { command })))}
+            onClearMemory={() => act(async () => setConversation(await conversationsApi.clearMemory(conversationId, conversation?.active_agent?.id)))}
+          />
         </section>
         <ExecutionPanel runId={runId} timeline={timeline} events={events} open={panelOpen} onClose={() => setPanelOpen(false)} onAnswer={(a) => act(() => runsApi.clarify(runId!, a))} onCancel={() => act(() => runsApi.cancel(runId!))} onRetry={() => act(() => runsApi.retry(runId!))} />
       </div>

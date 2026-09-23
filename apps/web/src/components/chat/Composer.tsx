@@ -6,7 +6,7 @@ import { commandsApi } from "@/lib/api/admin";
 import type { CommandOut } from "@/types/admin";
 import type { AssetOut } from "@/types/chat";
 
-export function Composer({ assets, busy, onSend, onStop }: { assets: AssetOut[]; busy: boolean; onSend: (content: string, assetIds: string[]) => Promise<void>; onStop?: () => void }) {
+export function Composer({ assets, busy, onSend, onStop, activeAgent, memoryTurns, onActivate, onClearMemory }: { assets: AssetOut[]; busy: boolean; onSend: (content: string, assetIds: string[]) => Promise<void>; onStop?: () => void; activeAgent?: { name: string; command: string } | null; memoryTurns?: number; onActivate?: (command: string | null) => Promise<void>; onClearMemory?: () => Promise<void> }) {
   const [text, setText] = useState("");
   const [commands, setCommands] = useState<CommandOut[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -26,12 +26,30 @@ export function Composer({ assets, busy, onSend, onStop }: { assets: AssetOut[];
   const send = async () => {
     if (!text.trim() || busy) return;
     const content = text;
+    const bare = /^\/[a-z][a-z0-9_-]*$/i.exec(content.trim());
     setText("");
+    if (bare && onActivate) {
+      // "/copy" alone: switch the conversation to that agent without starting a run
+      await onActivate(bare[0].toLowerCase() === "/auto" ? null : bare[0].toLowerCase());
+      return;
+    }
     await onSend(content, selected);
     setSelected([]);
   };
   return (
     <div className="border-t border-border bg-surface p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+        {activeAgent ? (
+          <>
+            <span className="rounded-full bg-accent-soft px-2 py-0.5 font-medium text-accent">Talking to {activeAgent.name} <span className="font-mono">{activeAgent.command}</span></span>
+            {memoryTurns ? <span className="text-muted">remembers {memoryTurns} turn{memoryTurns === 1 ? "" : "s"}</span> : <span className="text-faint">no memory yet</span>}
+            {onClearMemory && memoryTurns ? <button className="text-muted underline-offset-2 hover:underline" onClick={() => void onClearMemory()}>reset memory</button> : null}
+            {onActivate ? <button className="text-muted underline-offset-2 hover:underline" onClick={() => void onActivate(null)}>back to Manager (/auto)</button> : null}
+          </>
+        ) : (
+          <span className="text-faint">Manager routes plain messages · type /copy, /resize… to talk to one agent</span>
+        )}
+      </div>
       {menu.length ? (
         <div className="mb-2 rounded-md border border-border bg-surface-2 p-1" role="listbox">
           {menu.map((c, i) => (
@@ -49,7 +67,7 @@ export function Composer({ assets, busy, onSend, onStop }: { assets: AssetOut[];
           ref={ref}
           rows={2}
           value={text}
-          placeholder="Message or /command…"
+          placeholder={activeAgent ? `Message ${activeAgent.name}… (/auto to switch back)` : "Message or /command…"}
           className="flex-1 resize-none rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent"
           onChange={(e) => { setText(e.target.value); setHighlight(0); }}
           onKeyDown={(e) => {

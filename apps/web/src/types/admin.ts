@@ -58,6 +58,7 @@ export interface ProviderOut {
   base_url: string | null;
   has_secret: boolean;
   configured: boolean;
+  is_default: boolean;
   secret_fingerprint: string | null;
   key_preview: string | null;
   environment: "production" | "staging" | "development";

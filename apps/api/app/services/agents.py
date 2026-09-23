@@ -38,7 +38,7 @@ from app.schemas.admin import (
     ToolBindingIn,
 )
 from app.services import audit
-from app.services.agent_factory import build_runtime_agent
+from app.services.agent_factory import build_runtime_agent, default_provider
 from app.services.composer import ComposedSkill
 from app.services.providers import provider_adapters
 from app.services.usage import UsageContext, enforce_provider_limits, record_usage
@@ -286,7 +286,12 @@ class AgentService:
         if not version.instructions.strip():
             problems.append("instructions must not be empty")
         if version.provider_id is None:
-            problems.append("provider is required")
+            organization = await self.session.get(Organization, self.org_id)
+            fallback = await default_provider(self.session, organization) if organization else None
+            if fallback is None:
+                problems.append("provider is required (or connect a default provider under API Integrations)")
+            elif not version.model and not fallback.default_model:
+                problems.append(f"model is required: default provider '{fallback.name}' has no default model")
         else:
             provider = await self.session.scalar(
                 select(AIProvider)

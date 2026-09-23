@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, Uuid
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +28,12 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    active_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="agent that plain messages go to after a /command activated it",
+    )
 
     messages: Mapped[list[Message]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"
@@ -80,3 +86,28 @@ class MessageAttachment(UUIDPrimaryKeyMixin, Base):
     )
 
     message: Mapped[Message] = relationship(back_populates="attachments")
+
+
+class AgentSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Per-conversation, per-agent model context: the transcript the provider saw last time.
+
+    This is what makes `/copy` "remember" — the next turn with the same agent in the same
+    conversation continues from these items (trimmed to the model's context window).
+    """
+
+    __tablename__ = "agent_sessions"
+    __table_args__ = (UniqueConstraint("conversation_id", "agent_id"),)
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    model: Mapped[str] = mapped_column(String(120), nullable=False)
+    input_list: Mapped[list] = mapped_column(
+        JSONB, default=list, nullable=False, comment="provider transcript items"
+    )
+    turns: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    chars: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

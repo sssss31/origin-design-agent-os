@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, status
 
 from app.core.authz import DB, Auth
 from app.schemas.chat import (
+    ActiveAgentIn,
     ConversationCreate,
     ConversationOut,
     ConversationUpdate,
@@ -15,7 +16,7 @@ from app.schemas.chat import (
     MessageSearchHit,
 )
 from app.schemas.common import from_orm
-from app.services.conversations import ConversationService, serialize_messages
+from app.services.conversations import ConversationService, serialize_conversation, serialize_messages
 
 router = APIRouter(tags=["chat"])
 
@@ -60,7 +61,29 @@ async def search_messages(
 @router.get("/conversations/{conversation_id}", response_model=ConversationOut)
 async def get_conversation(conversation_id: uuid.UUID, ctx: Auth, session: DB) -> ConversationOut:
     conv, _ = await ConversationService(session, ctx).get(conversation_id)
-    return from_orm(ConversationOut, conv)
+    return await serialize_conversation(session, conv)
+
+
+@router.put("/conversations/{conversation_id}/active-agent", response_model=ConversationOut)
+async def set_active_agent(
+    conversation_id: uuid.UUID, body: ActiveAgentIn, ctx: Auth, session: DB
+) -> ConversationOut:
+    """Activate an agent for this chat (`/copy`) or return to the Manager (empty body)."""
+    conv = await ConversationService(session, ctx).set_active_agent(
+        conversation_id, command=body.command, agent_id=body.agent_id
+    )
+    return await serialize_conversation(session, conv)
+
+
+@router.delete("/conversations/{conversation_id}/memory", response_model=ConversationOut)
+async def clear_memory(
+    conversation_id: uuid.UUID, ctx: Auth, session: DB, agent_id: uuid.UUID | None = None
+) -> ConversationOut:
+    """Forget the agent transcripts kept for this chat (all agents, or one)."""
+    svc = ConversationService(session, ctx)
+    await svc.clear_memory(conversation_id, agent_id)
+    conv, _ = await svc.get(conversation_id)
+    return await serialize_conversation(session, conv)
 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationOut)

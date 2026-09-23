@@ -98,6 +98,7 @@ function ProviderCard({ card, onChanged, onReconfigure }: { card: ProviderCardDa
         </div>
         <div className="flex items-center gap-2">
           <Badge tone={tone}>{statusLabel}</Badge>
+          {p.is_default ? <Badge tone="accent">default</Badge> : null}
           {!p.enabled ? <Badge tone="neutral">disabled</Badge> : null}
         </div>
       </div>
@@ -121,6 +122,8 @@ function ProviderCard({ card, onChanged, onReconfigure }: { card: ProviderCardDa
         <Button variant="secondary" disabled={busy || !p.configured} onClick={() => { setBusy(true); void run(async () => { setTest(await providersApi.connectionTest(p.id)); onChanged(); }, setError).finally(() => setBusy(false)); }}><RefreshCw size={13} className={busy ? "animate-spin" : ""} /> Test Connection</Button>
         {p.type !== "echo" ? <Button variant="secondary" onClick={() => setRotating(true)}>Update Key</Button> : null}
         {p.type === "openai" ? <Button variant="secondary" onClick={onReconfigure}>Manage Models</Button> : null}
+        {!p.is_default && p.configured ? <Button variant="secondary" onClick={() => void run(async () => { await providersApi.setDefault(p.id); onChanged(); }, setError)}>Set as default</Button> : null}
+        {p.configured ? <Button variant="secondary" onClick={() => { if (window.confirm(`Switch every agent to ${p.name}?`)) void run(async () => { const r = await providersApi.adopt(p.id); window.alert(`Switched ${r.switched} agents (${r.skipped} already on it, ${r.failed} failed).`); onChanged(); }, setError); }}>Use for all agents</Button> : null}
         <Button variant="secondary" onClick={() => void run(async () => { await providersApi.update(p.id, { enabled: !p.enabled }); onChanged(); }, setError)}>{p.enabled ? "Disable" : "Enable"}</Button>
         <Button variant="ghost" onClick={() => { if (window.confirm(`Delete ${p.name}? Agents using it must be reassigned first.`)) void run(async () => { await providersApi.remove(p.id); onChanged(); }, setError); }}>Delete</Button>
       </div>

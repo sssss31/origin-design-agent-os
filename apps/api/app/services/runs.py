@@ -143,13 +143,33 @@ class RunService:
             raise ValidationFailed("Provide message_id or content", code="missing_input")
 
         parsed = parse_message(message.content)
-        route = await resolve_route(
-            self.session,
-            org_id,
-            parsed,
-            command_override=data.command,
-            preferred_agent_id=data.preferred_agent_id,
-        )
+        # Sticky agent: after `/copy …` the conversation keeps talking to the Copy Agent until
+        # another /command (or /auto) is used. Explicit commands always win.
+        preferred = data.preferred_agent_id
+        if preferred is None and parsed.command is None and data.command is None and conv.active_agent_id:
+            preferred = conv.active_agent_id
+        try:
+            route = await resolve_route(
+                self.session,
+                org_id,
+                parsed,
+                command_override=data.command,
+                preferred_agent_id=preferred,
+            )
+        except ValidationFailed as exc:
+            if (
+                preferred is not None
+                and preferred == conv.active_agent_id
+                and exc.code == "agent_unavailable"
+            ):
+                conv.active_agent_id = None  # the sticky agent was disabled meanwhile; fall back
+                route = await resolve_route(self.session, org_id, parsed, command_override=data.command)
+            else:
+                raise
+        if route.explicit and route.agent.is_manager is False:
+            conv.active_agent_id = route.agent.id
+        elif route.command == "/auto" or route.agent.is_manager:
+            conv.active_agent_id = None
         run = WorkflowRun(
             organization_id=org_id,
             workspace_id=access.workspace.id,

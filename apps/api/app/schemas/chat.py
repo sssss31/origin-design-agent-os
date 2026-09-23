@@ -18,6 +18,23 @@ class ConversationUpdate(BaseModel):
     status: str | None = Field(default=None, pattern="^(active|archived)$")
 
 
+class ActiveAgentOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    command: str
+
+
+class AgentMemoryOut(BaseModel):
+    agent_id: uuid.UUID
+    agent_name: str
+    command: str
+    turns: int
+    chars: int
+    model: str
+    updated_at: datetime
+
+
 class ConversationOut(ORMModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -26,6 +43,15 @@ class ConversationOut(ORMModel):
     last_message_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    active_agent: ActiveAgentOut | None = None
+    memory: list[AgentMemoryOut] = Field(default_factory=list)
+
+
+class ActiveAgentIn(BaseModel):
+    """Set with a /command or agent id; send neither to return to the Manager."""
+
+    command: str | None = Field(default=None, max_length=41)
+    agent_id: uuid.UUID | None = None
 
 
 class AttachmentOut(BaseModel):

@@ -77,6 +77,7 @@ class ProviderOut(ORMModel):
     base_url: str | None
     has_secret: bool
     configured: bool
+    is_default: bool = False
     secret_fingerprint: str | None
     key_preview: str | None
     environment: str

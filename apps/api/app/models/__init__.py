@@ -1,7 +1,7 @@
 """Import every model module so `Base.metadata` is complete for Alembic and tests."""
 
 from app.models.agents import Agent, AgentHandoff, AgentSkillBinding, AgentToolBinding, AgentVersion
-from app.models.chat import Conversation, Message, MessageAttachment
+from app.models.chat import AgentSession, Conversation, Message, MessageAttachment
 from app.models.files import Artifact, ArtifactVersion, Asset, AssetVersion
 from app.models.governance import AuditLog, SecretRef
 from app.models.identity import Organization, OrganizationMember, RefreshToken, User
@@ -32,6 +32,7 @@ __all__ = [
     "AIProvider",
     "Agent",
     "AgentHandoff",
+    "AgentSession",
     "AgentSkillBinding",
     "AgentToolBinding",
     "AgentVersion",

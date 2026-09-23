@@ -1,5 +1,22 @@
 import type { EventType, NodeState, RunState, SafeEventPayload } from "@/types/events";
 
+export interface ActiveAgentOut {
+  id: string;
+  name: string;
+  slug: string;
+  command: string;
+}
+
+export interface AgentMemoryOut {
+  agent_id: string;
+  agent_name: string;
+  command: string;
+  turns: number;
+  chars: number;
+  model: string;
+  updated_at: string;
+}
+
 export interface ConversationOut {
   id: string;
   project_id: string;
@@ -8,6 +25,8 @@ export interface ConversationOut {
   last_message_at: string | null;
   created_at: string;
   updated_at: string;
+  active_agent: ActiveAgentOut | null;
+  memory: AgentMemoryOut[];
 }
 
 export interface AttachmentOut {

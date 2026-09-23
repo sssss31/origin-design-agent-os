@@ -24,6 +24,7 @@ export function OpenAIConnectWizard({ existing, onDone, onCancel }: { existing?:
   const [monthlyBudget, setMonthlyBudget] = useState(String((existing?.rate_limit_policy?.monthly_budget_usd as number | undefined) ?? ""));
   const [dailyRequests, setDailyRequests] = useState(String((existing?.rate_limit_policy?.max_requests_per_day as number | undefined) ?? ""));
   const [busy, setBusy] = useState(false);
+  const [adopted, setAdopted] = useState<{ switched: number; skipped: number; failed: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const guard = async (fn: () => Promise<void>) => {
@@ -75,7 +76,8 @@ export function OpenAIConnectWizard({ existing, onDone, onCancel }: { existing?:
       const policy: Record<string, number> = {};
       if (monthlyBudget) policy.monthly_budget_usd = Number(monthlyBudget);
       if (dailyRequests) policy.max_requests_per_day = Number(dailyRequests);
-      const p = await providersApi.update(provider.id, { rate_limit_policy: policy, enabled: true });
+      let p = await providersApi.update(provider.id, { rate_limit_policy: policy, enabled: true });
+      p = await providersApi.setDefault(p.id); // agents without an explicit provider now use this key
       setProvider(p);
       setStep(4);
       onDone(p);
@@ -148,9 +150,13 @@ export function OpenAIConnectWizard({ existing, onDone, onCancel }: { existing?:
       {step === 4 ? (
         <div className="space-y-2">
           <p className="text-sm font-medium text-success">✓ OpenAI Connected</p>
-          <p className="text-sm text-muted">Origin agents can now use this provider. Assign it under Agents → Edit Agent → AI Provider.</p>
-          <div className="flex gap-2"><Badge tone="success">{provider?.key_preview}</Badge><Badge>{provider?.models.length ?? 0} models</Badge></div>
-          <Button variant="secondary" onClick={onCancel}>Close</Button>
+          <p className="text-sm text-muted">This is now the organisation&apos;s default provider: any agent without its own provider runs on it. Type <span className="font-mono">/copy</span>, <span className="font-mono">/master</span>… in a chat and the agent uses this key.</p>
+          <div className="flex gap-2"><Badge tone="success">{provider?.key_preview}</Badge><Badge>{provider?.models.length ?? 0} models</Badge><Badge tone="accent">default</Badge></div>
+          {adopted ? <p className="text-xs text-success">Switched {adopted.switched} agents ({adopted.skipped} already on it{adopted.failed ? `, ${adopted.failed} failed` : ""}).</p> : null}
+          <div className="flex gap-2">
+            <Button disabled={busy} onClick={() => void guard(async () => { if (provider) setAdopted(await providersApi.adopt(provider.id)); })}>Switch all agents to OpenAI</Button>
+            <Button variant="secondary" onClick={onCancel}>Close</Button>
+          </div>
         </div>
       ) : null}
       <ErrorText>{error}</ErrorText>

@@ -26,8 +26,9 @@ from app.domain.events import EventType, SafeEventPayload
 from app.domain.qc import parse_report
 from app.domain.roles import Role, has_at_least
 from app.domain.run_state import NodeState, RunState
+from app.domain.session_memory import budget_chars, count_turns, item_chars, trim_input_list
 from app.models.agents import Agent, AgentVersion
-from app.models.chat import Conversation
+from app.models.chat import AgentSession, Conversation
 from app.models.files import Artifact, ArtifactVersion
 from app.models.identity import Organization, OrganizationMember
 from app.models.tools import Tool, ToolPermission
@@ -618,13 +619,43 @@ class RunExecutor:
                 )
                 await recorder.commit()
 
+        # the agent's own context window: prior turns with this agent in this conversation
+        agent_session = await session.scalar(
+            select(AgentSession).where(
+                AgentSession.conversation_id == run.conversation_id, AgentSession.agent_id == agent.id
+            )
+        )
+        session_state: dict[str, Any] | None = None
+        if agent_session is not None and agent_session.input_list and node.resume_state_json is None:
+            caps = provider_adapter.model_capabilities(
+                runtime.model, runtime.model_settings.get("_capabilities")
+            )
+            same_model = agent_session.provider_type == resolved.provider.type
+            if same_model:
+                trimmed = trim_input_list(
+                    list(agent_session.input_list),
+                    max_chars=max(4000, budget_chars(caps.context_window) - len(runtime.instructions)),
+                )
+                session_state = {"input_list": trimmed}
         run_input = RunInput(
             user_input=run.input_json.get("body") or run.user_input,
             context_summary=context_summary,
             resume_state=node.resume_state_json,
             clarification_answer=node.answer,
             attachments=list(run.input_json.get("attachments", [])),
+            session_state=session_state,
         )
+        if session_state:
+            await recorder.add(
+                EventType.CONTEXT_LOADED,
+                SafeEventPayload(
+                    node_id=node.node_id,
+                    agent_slug=agent.slug,
+                    context_sources=[f"agent_memory:{count_turns(session_state['input_list'])}_turns"],
+                ),
+                node_run_id=node.id,
+            )
+            await recorder.commit()
         started = datetime.now(UTC)
         try:
             outcome: RunOutcome = await asyncio.wait_for(
@@ -708,6 +739,21 @@ class RunExecutor:
                 node_run_id=node.id,
             )
 
+        if outcome.session_state and isinstance(outcome.session_state.get("input_list"), list):
+            items = list(outcome.session_state["input_list"])
+            if agent_session is None:
+                agent_session = AgentSession(
+                    conversation_id=run.conversation_id,
+                    agent_id=agent.id,
+                    provider_type=resolved.provider.type,
+                    model=runtime.model,
+                )
+                session.add(agent_session)
+            agent_session.provider_type = resolved.provider.type
+            agent_session.model = runtime.model
+            agent_session.input_list = items
+            agent_session.turns = count_turns(items)
+            agent_session.chars = sum(item_chars(i) for i in items)
         node.output_json = {
             "output_text": outcome.output_text,
             "structured_output": outcome.structured_output,

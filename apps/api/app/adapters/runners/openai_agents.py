@@ -121,6 +121,11 @@ class OpenAIAgentsRunner:
                     "content": f"Answer to your question: {run_input.clarification_answer or ''}",
                 }
             ]
+        elif run_input.session_state and run_input.session_state.get("input_list"):
+            # the agent's context window: prior turns with this agent in this conversation
+            sdk_input = list(run_input.session_state["input_list"]) + [
+                {"role": "user", "content": run_input.user_input}
+            ]
         else:
             sdk_input = run_input.user_input
         config = RunConfig(
@@ -175,7 +180,24 @@ class OpenAIAgentsRunner:
         else:
             output_text = str(final or "")
             structured = _extract_json_block(output_text)
-        return RunOutcome(output_text=output_text, structured_output=structured, usage=usage, steps=steps)
+        return RunOutcome(
+            output_text=output_text,
+            structured_output=structured,
+            usage=usage,
+            steps=steps,
+            session_state={"input_list": _jsonable(result.to_input_list())},
+        )
+
+
+def _jsonable(items: Any) -> list[dict[str, Any]]:
+    """SDK input items may be pydantic models; store plain JSON so they survive the database."""
+    out: list[dict[str, Any]] = []
+    for it in items or []:
+        if hasattr(it, "model_dump"):
+            out.append(it.model_dump(mode="json", exclude_none=True))
+        elif isinstance(it, dict):
+            out.append(json.loads(json.dumps(it, default=str)))
+    return out
 
 
 def _extract_json_block(text: str) -> dict[str, Any] | None:

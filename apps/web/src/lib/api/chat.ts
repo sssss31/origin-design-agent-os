@@ -17,6 +17,8 @@ export const conversationsApi = {
   get: (id: string) => api<ConversationOut>(`/conversations/${id}`),
   update: (id: string, body: { title?: string; status?: "active" | "archived" }) => api<ConversationOut>(`/conversations/${id}`, { method: "PATCH", body }),
   messages: (id: string) => api<MessageOut[]>(`/conversations/${id}/messages`),
+  setActiveAgent: (id: string, body: { command?: string | null; agent_id?: string | null }) => api<ConversationOut>(`/conversations/${id}/active-agent`, { method: "PUT", body }),
+  clearMemory: (id: string, agentId?: string) => api<ConversationOut>(`/conversations/${id}/memory${agentId ? `?agent_id=${agentId}` : ""}`, { method: "DELETE" }),
   search: (projectId: string, q: string) => api<{ message: MessageOut; conversation_title: string }[]>(`/projects/${projectId}/messages/search?q=${encodeURIComponent(q)}`),
 };
 

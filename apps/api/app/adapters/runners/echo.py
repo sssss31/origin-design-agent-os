@@ -46,12 +46,28 @@ class EchoRunner:
             if f"!{tool.slug}" in run_input.user_input:
                 result = await invoke_tool(tool.slug, {})
                 tool_notes.append(f"{tool.slug}→{result.get('ok', True)}")
+        prior = list((run_input.session_state or {}).get("input_list", []))
+        remembered = [it for it in prior if it.get("role") == "user"]
+        memory_note = (
+            f" (memory: {len(remembered)} earlier turn{'s' if len(remembered) != 1 else ''})" if prior else ""
+        )
+        output_text = (
+            f"[{agent.slug} v{agent.version} · {agent.model}] {run_input.user_input.strip()}"
+            + (f" (tools: {', '.join(tool_notes)})" if tool_notes else "")
+            + memory_note
+        )
+        transcript = prior + [
+            {"role": "user", "content": run_input.user_input},
+            {"role": "assistant", "content": output_text},
+        ]
         return RunOutcome(
-            output_text=(
-                f"[{agent.slug} v{agent.version} · {agent.model}] {run_input.user_input.strip()}"
-                + (f" (tools: {', '.join(tool_notes)})" if tool_notes else "")
-            ),
-            structured_output={"echo": run_input.user_input, "instruction_chars": len(agent.instructions)},
+            output_text=output_text,
+            structured_output={
+                "echo": run_input.user_input,
+                "instruction_chars": len(agent.instructions),
+                "memory_turns": len(remembered),
+            },
             defaults_used=["echo runner: no provider call was made"],
             steps=1,
+            session_state={"input_list": transcript},
         )

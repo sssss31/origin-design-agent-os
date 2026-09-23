@@ -62,6 +62,7 @@ async def resolve_route(
         if agent is None:
             raise ValidationFailed("The requested agent is not active", code="agent_unavailable")
         explicit = True
+        command = command or agent.command  # sticky/preferred routing is attributed to the agent's command
     elif command is not None and command != "/auto":
         agent = await _active_agent(session, org_id, command=command)
         if agent is None:

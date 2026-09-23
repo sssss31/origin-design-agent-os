@@ -30,6 +30,8 @@ export const providersApi = {
   connectionTest: (ref: string) => api<ProviderConnectionOut>(`${A}/providers/${ref}/connection-test`, { method: "POST" }),
   deleteSecret: (id: string) => api<ProviderOut>(`${A}/providers/${id}/secret`, { method: "DELETE" }),
   remove: (id: string) => api<void>(`${A}/providers/${id}`, { method: "DELETE" }),
+  setDefault: (id: string) => api<ProviderOut>(`${A}/providers/${id}/set-default`, { method: "POST" }),
+  adopt: (id: string) => api<{ switched: number; skipped: number; failed: number }>(`${A}/providers/${id}/adopt`, { method: "POST" }),
   supportedModels: (id: string) => api<{ model: string; display_name: string; capabilities: ModelCapabilities }[]>(`${A}/providers/${id}/supported-models`),
   setModels: (id: string, models: { model: string; enabled?: boolean }[], default_model: string | null) =>
     api<ProviderOut>(`${A}/providers/${id}/models`, { method: "PUT", body: { models, default_model } }),

@@ -42,6 +42,7 @@ class RunInput:
     resume_state: dict[str, Any] | None = None
     clarification_answer: str | None = None
     attachments: list[dict[str, Any]] = field(default_factory=list)
+    session_state: dict[str, Any] | None = None  # prior transcript with this agent (context window)
 
 
 @dataclass(slots=True)
@@ -61,6 +62,7 @@ class RunOutcome:
     question: str | None = None
     question_schema: dict[str, Any] | None = None
     resume_state: dict[str, Any] | None = None
+    session_state: dict[str, Any] | None = None  # transcript to carry into the next turn
     files: list[ProducedFile] = field(default_factory=list)
     defaults_used: list[str] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)

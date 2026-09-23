@@ -300,11 +300,11 @@ function ModelTab({ agent, version, providers, onSave, onSaveGeneral }: { agent:
         <div>
           <CardTitle>AI Provider</CardTitle>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Select label="Provider" value={providerId} onChange={(v) => { setProviderId(v); setModel(providers.find((p) => p.id === v)?.default_model ?? ""); }} options={[{ value: "", label: "Choose…" }, ...providers.map((p) => ({ value: p.id, label: `${p.name}${p.enabled ? "" : " (disabled)"}${p.type !== "echo" && !p.configured ? " — no key" : ""}` }))]} />
+            <Select label="Provider" value={providerId} onChange={(v) => { setProviderId(v); setModel(providers.find((p) => p.id === v)?.default_model ?? ""); }} options={[{ value: "", label: `Organisation default${providers.find((p) => p.is_default) ? ` (${providers.find((p) => p.is_default)!.name})` : " — none set"}` }, ...providers.map((p) => ({ value: p.id, label: `${p.name}${p.is_default ? " ★" : ""}${p.enabled ? "" : " (disabled)"}${p.type !== "echo" && !p.configured ? " — no key" : ""}` }))]} />
             {allowed.length > 0 ? (
               <Select label="Model" value={model} onChange={setModel} options={[{ value: "", label: "Choose…" }, ...allowed.map((m) => ({ value: m.model, label: m.display_name ? `${m.display_name} — ${m.model}` : m.model }))]} />
             ) : (
-              <Field label="Model" hint={provider ? "No allowlist yet — set allowed models under API Integrations." : "Pick a provider first."}><Input value={model} onChange={(e) => setModel(e.target.value)} disabled={!provider} /></Field>
+              <Field label="Model" hint={provider ? "No allowlist yet — set allowed models under API Integrations." : "Empty = the default provider's default model."}><Input value={model} onChange={(e) => setModel(e.target.value)} /></Field>
             )}
           </div>
           {unconfigured ? <p className="mt-2 text-xs text-warning">This provider has no API key. Add one under Admin → API Integrations before publishing.</p> : null}

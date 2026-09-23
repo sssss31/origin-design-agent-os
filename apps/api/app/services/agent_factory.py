@@ -7,6 +7,7 @@ endpoint now and by the run executor from Phase 4 onwards.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -108,6 +109,55 @@ async def resolve_tools(
     return runtime, ids
 
 
+async def default_provider(session: AsyncSession, organization: Organization) -> AIProvider | None:
+    """The organization's default provider (set when an admin connects a key) — lets agents run
+    with *only* an API key configured, no per-agent provider assignment."""
+    ref = (organization.settings_json or {}).get("default_provider_id")
+    provider: AIProvider | None = None
+    if ref:
+        try:
+            provider = await session.get(AIProvider, uuid.UUID(str(ref)))
+        except ValueError:
+            provider = None
+    if provider is None or provider.organization_id != organization.id or not provider.enabled:
+        provider = await session.scalar(
+            select(AIProvider)
+            .where(
+                AIProvider.organization_id == organization.id,
+                AIProvider.enabled.is_(True),
+                AIProvider.secret_ref_id.is_not(None),
+            )
+            .order_by(AIProvider.created_at)
+        )
+    return provider
+
+
+async def resolve_provider_and_model(
+    session: AsyncSession, organization: Organization, version: AgentVersion
+) -> tuple[AIProvider, str]:
+    provider: AIProvider | None = None
+    if version.provider_id is not None:
+        provider = await session.get(AIProvider, version.provider_id)
+        if provider is None or provider.organization_id != organization.id:
+            raise ValidationFailed("Agent provider not found in this organization", code="provider_not_found")
+    else:
+        provider = await default_provider(session, organization)
+        if provider is None:
+            raise ValidationFailed(
+                "No provider configured: connect an API key under Admin → API Integrations",
+                code="agent_not_configured",
+            )
+    if not provider.enabled:
+        raise ValidationFailed(f"Provider '{provider.name}' is disabled", code="provider_disabled")
+    model = version.model or provider.default_model
+    if not model:
+        raise ValidationFailed(
+            f"No model configured for provider '{provider.name}' (set a default model)",
+            code="agent_not_configured",
+        )
+    return provider, model
+
+
 async def build_runtime_agent(
     session: AsyncSession,
     agent: Agent,
@@ -120,13 +170,7 @@ async def build_runtime_agent(
     user_request: str | None = None,
     extra_skills: Sequence[ComposedSkill] | None = None,
 ) -> ResolvedAgent:
-    if version.provider_id is None or not version.model:
-        raise ValidationFailed("Agent version has no provider/model configured", code="agent_not_configured")
-    provider = await session.get(AIProvider, version.provider_id)
-    if provider is None or provider.organization_id != agent.organization_id:
-        raise ValidationFailed("Agent provider not found in this organization", code="provider_not_found")
-    if not provider.enabled:
-        raise ValidationFailed(f"Provider '{provider.name}' is disabled", code="provider_disabled")
+    provider, model = await resolve_provider_and_model(session, organization, version)
 
     skills = await resolve_skills(session, version)
     if extra_skills:
@@ -164,7 +208,7 @@ async def build_runtime_agent(
         name=agent.name,
         version=version.version,
         instructions=composition.text,
-        model=version.model,
+        model=model,
         provider_type=provider.type,
         model_settings=dict(version.model_settings),
         tools=tools,

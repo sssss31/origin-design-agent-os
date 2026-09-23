@@ -300,3 +300,61 @@ class ProviderService:
 
     async def allowed_models(self, provider: AIProvider) -> set[str]:
         return {m.model for m in provider.models if m.enabled}
+
+    async def set_default(self, provider_id: uuid.UUID) -> AIProvider:
+        """Make this the organization's default provider: agents without an explicit provider use it."""
+        from app.models.identity import Organization
+
+        row = await self.get(provider_id)
+        org = await self.session.get(Organization, self.org_id)
+        assert org is not None
+        before = {"default_provider_id": (org.settings_json or {}).get("default_provider_id")}
+        org.settings_json = {**(org.settings_json or {}), "default_provider_id": str(row.id)}
+        await self.session.flush()
+        await self._audit(
+            "provider.set_default", row.id, before=before, after={"default_provider_id": str(row.id)}
+        )
+        return row
+
+    async def is_default(self, provider_id: uuid.UUID) -> bool:
+        from app.models.identity import Organization
+
+        org = await self.session.get(Organization, self.org_id)
+        return bool(org and (org.settings_json or {}).get("default_provider_id") == str(provider_id))
+
+    async def adopt(self, provider_id: uuid.UUID, *, model: str | None = None) -> dict[str, int]:
+        """Point every agent at this provider (new draft + publish), e.g. after connecting OpenAI."""
+        from app.schemas.admin import AgentVersionInput, PublishRequest
+        from app.services.agents import AgentService
+
+        row = await self.get(provider_id)
+        allowed = {m.model for m in row.models if m.enabled}
+        target_model = model or row.default_model or next(iter(sorted(allowed)), None)
+        if target_model is None:
+            raise ValidationFailed("Set a default model on the provider first", code="default_model_missing")
+        agents = AgentService(self.session, self.ctx)
+        switched = skipped = failed = 0
+        for agent in await agents.list():
+            active = agents.active_of(agent)
+            if (
+                active is not None
+                and active.provider_id == row.id
+                and (active.model in allowed or not allowed)
+            ):
+                skipped += 1
+                continue
+            current_model = active.model if active else None
+            chosen = (
+                current_model if current_model and (not allowed or current_model in allowed) else target_model
+            )
+            try:
+                await agents.save_draft(agent.id, AgentVersionInput(provider_id=row.id, model=chosen))
+                if active is not None:
+                    await agents.publish(agent.id, PublishRequest(change_note=f"switched to {row.name}"))
+                switched += 1
+            except Exception:  # keep going; the admin sees the counts and can fix individual agents
+                failed += 1
+        await self._audit(
+            "provider.adopted", row.id, after={"switched": switched, "skipped": skipped, "failed": failed}
+        )
+        return {"switched": switched, "skipped": skipped, "failed": failed}

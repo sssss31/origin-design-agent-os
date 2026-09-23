@@ -33,13 +33,14 @@ from app.schemas.common import from_orm
 from app.schemas.integrations import IntegrationOut, IntegrationSecretOut
 
 
-def provider_out(p: AIProvider) -> ProviderOut:
+def provider_out(p: AIProvider, *, is_default: bool = False) -> ProviderOut:
     from app.services.providers import provider_adapters
 
     adapter = provider_adapters().get(p.type)
     return from_orm(
         ProviderOut,
         p,
+        is_default=is_default,
         has_secret=p.secret_ref_id is not None,
         configured=p.secret_ref_id is not None or p.type == "echo",
         models=[

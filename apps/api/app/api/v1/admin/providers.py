@@ -30,7 +30,8 @@ router = APIRouter(prefix="/providers")
 
 @router.get("", response_model=list[ProviderOut])
 async def list_providers(ctx: AdminAuth, session: DB) -> list[ProviderOut]:
-    return [provider_out(p) for p in await ProviderService(session, ctx).list()]
+    svc = ProviderService(session, ctx)
+    return [provider_out(p, is_default=await svc.is_default(p.id)) for p in await svc.list()]
 
 
 PROVIDER_TYPES = ("openai", "echo")
@@ -121,6 +122,24 @@ async def test_provider_connection(
 @router.post("", response_model=ProviderOut, status_code=status.HTTP_201_CREATED)
 async def create_provider(body: ProviderCreate, ctx: AdminAuth, session: DB) -> ProviderOut:
     return provider_out(await ProviderService(session, ctx).create(body))
+
+
+@router.post("/{provider_id}/set-default", response_model=ProviderOut)
+async def set_default_provider(provider_id: uuid.UUID, ctx: AdminAuth, session: DB) -> ProviderOut:
+    """Agents without an explicit provider run on the default one — only the API key is needed."""
+    svc = ProviderService(session, ctx)
+    row = await svc.set_default(provider_id)
+    return provider_out(row, is_default=True)
+
+
+@router.post("/{provider_id}/adopt")
+async def adopt_provider(
+    provider_id: uuid.UUID, ctx: AdminAuth, session: DB, model: str | None = None
+) -> dict[str, int]:
+    """Switch every agent to this provider (draft + publish); sets it as default too."""
+    svc = ProviderService(session, ctx)
+    await svc.set_default(provider_id)
+    return await svc.adopt(provider_id, model=model)
 
 
 @router.delete("/{provider_id}/secret", response_model=ProviderOut)

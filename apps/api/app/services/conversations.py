@@ -10,13 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.authz import AuthContext
-from app.core.errors import NotFound
+from app.core.errors import NotFound, ValidationFailed
 from app.domain.roles import Role
 from app.domain.slash import parse_message
 from app.models.agents import Agent
 from app.models.chat import Conversation, Message, MessageAttachment
 from app.models.files import Artifact, Asset
-from app.schemas.chat import AttachmentOut, ConversationCreate, ConversationUpdate, MessageCreate, MessageOut
+from app.schemas.chat import (
+    AttachmentOut,
+    ConversationCreate,
+    ConversationOut,
+    ConversationUpdate,
+    MessageCreate,
+    MessageOut,
+)
 from app.schemas.common import from_orm
 from app.services import audit
 from app.services.access import ProjectAccess, resolve_project
@@ -191,6 +198,49 @@ class ConversationService:
             request_id=self._require_ctx().request_id,
         )
 
+    # ------------------------------------------------------------------ sticky agent + memory
+    async def set_active_agent(
+        self, conversation_id: uuid.UUID, *, command: str | None, agent_id: uuid.UUID | None
+    ) -> Conversation:
+        """`/copy` with no text: talk to the Copy Agent from now on. Neither → back to the Manager."""
+        from app.domain.slash import normalize_command
+        from app.models.agents import Agent
+
+        conv, access = await self._conversation(conversation_id, Role.MEMBER)
+        org_id = access.workspace.organization_id
+        agent: Agent | None = None
+        if agent_id is not None or (command and normalize_command(command) != "/auto"):
+            q = select(Agent).where(
+                Agent.organization_id == org_id,
+                Agent.status == "active",
+                Agent.active_version_id.is_not(None),
+            )
+            q = (
+                q.where(Agent.id == agent_id)
+                if agent_id is not None
+                else q.where(Agent.command == normalize_command(command or ""))
+            )
+            agent = await self.session.scalar(q)
+            if agent is None:
+                raise ValidationFailed("No active agent handles that command", code="agent_unavailable")
+            if agent.is_manager:
+                agent = None
+        conv.active_agent_id = agent.id if agent else None
+        await self.session.flush()
+        return conv
+
+    async def clear_memory(self, conversation_id: uuid.UUID, agent_id: uuid.UUID | None = None) -> int:
+        from sqlalchemy import delete
+
+        from app.models.chat import AgentSession
+
+        conv, _ = await self._conversation(conversation_id, Role.MEMBER)
+        q = delete(AgentSession).where(AgentSession.conversation_id == conv.id)
+        if agent_id is not None:
+            q = q.where(AgentSession.agent_id == agent_id)
+        result = await self.session.execute(q)
+        return int(getattr(result, "rowcount", 0) or 0)
+
 
 async def serialize_messages(session: AsyncSession, messages: list[Message]) -> list[MessageOut]:
     agent_ids = {m.agent_id for m in messages if m.agent_id}
@@ -239,3 +289,39 @@ async def serialize_messages(session: AsyncSession, messages: list[Message]) -> 
             )
         )
     return out
+
+
+async def serialize_conversation(session: AsyncSession, conv: Conversation) -> ConversationOut:
+    """ConversationOut with the sticky agent and per-agent memory sizes."""
+    from app.models.agents import Agent
+    from app.models.chat import AgentSession
+    from app.schemas.chat import ActiveAgentOut, AgentMemoryOut
+
+    active = await session.get(Agent, conv.active_agent_id) if conv.active_agent_id else None
+    rows = (
+        await session.execute(
+            select(AgentSession, Agent)
+            .join(Agent, Agent.id == AgentSession.agent_id)
+            .where(AgentSession.conversation_id == conv.id)
+            .order_by(AgentSession.updated_at.desc())
+        )
+    ).all()
+    return from_orm(
+        ConversationOut,
+        conv,
+        active_agent=ActiveAgentOut(id=active.id, name=active.name, slug=active.slug, command=active.command)
+        if active
+        else None,
+        memory=[
+            AgentMemoryOut(
+                agent_id=a.id,
+                agent_name=a.name,
+                command=a.command,
+                turns=s.turns,
+                chars=s.chars,
+                model=s.model,
+                updated_at=s.updated_at,
+            )
+            for s, a in rows
+        ],
+    )
