@@ -54,6 +54,7 @@ export function OpenAIConnectWizard({ existing, onDone, onCancel }: { existing?:
       }
       setSelected(out.provider.models.map((m) => m.model));
       setDefaultModel(out.provider.default_model ?? "");
+      onDone(out.provider); // refresh the provider cards behind the wizard
       setStep(out.connection?.success ? 2 : 1);
     });
 
