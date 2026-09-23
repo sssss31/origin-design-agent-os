@@ -339,6 +339,19 @@ class SkillBindingIn(BaseModel):
     variables: dict[str, Any] = Field(default_factory=dict)
 
 
+class SkillOrderIn(BaseModel):
+    """Ordered skill ids; priorities are rewritten 10, 20, 30… on the draft."""
+
+    skill_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+
+class SkillTestRequest(BaseModel):
+    agent_id: uuid.UUID
+    input: str = Field(min_length=1, max_length=20000)
+    use_draft: bool = True
+    variables: dict[str, Any] = Field(default_factory=dict)
+
+
 class ToolBindingIn(BaseModel):
     enabled: bool = True
     settings_json: dict[str, Any] = Field(default_factory=dict)

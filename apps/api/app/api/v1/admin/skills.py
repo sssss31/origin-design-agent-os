@@ -9,7 +9,15 @@ from app.api.v1.admin import AdminAuth
 from app.core.authz import DB, Config
 from app.core.deps import AdaptersDep
 from app.core.errors import ValidationFailed
-from app.schemas.admin import PublishRequest, SkillCreate, SkillOut, SkillUpdate, SkillVersionInput
+from app.schemas.admin import (
+    AgentTestOut,
+    PublishRequest,
+    SkillCreate,
+    SkillOut,
+    SkillTestRequest,
+    SkillUpdate,
+    SkillVersionInput,
+)
 from app.services.admin_serializers import skill_out
 from app.services.skills import SkillService
 
@@ -58,6 +66,14 @@ async def save_skill_draft(
 @router.post("/{skill_id}/publish", response_model=SkillOut)
 async def publish_skill(skill_id: uuid.UUID, body: PublishRequest, ctx: AdminAuth, session: DB) -> SkillOut:
     return skill_out(await SkillService(session, ctx).publish(skill_id, body))
+
+
+@router.post("/{skill_id}/test", response_model=AgentTestOut)
+async def test_skill(
+    skill_id: uuid.UUID, body: SkillTestRequest, ctx: AdminAuth, session: DB, adapters: AdaptersDep
+) -> AgentTestOut:
+    """Sandbox: run the chosen agent with this skill's draft/active version injected (spec §5 step 6)."""
+    return await SkillService(session, ctx).test(skill_id, body, adapters)
 
 
 @router.post("/{skill_id}/files", response_model=SkillOut, status_code=status.HTTP_201_CREATED)

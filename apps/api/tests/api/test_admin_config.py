@@ -445,17 +445,125 @@ async def test_provider_delete_refused_while_in_use_and_secret_removal(app, make
 async def test_integrations_overview_cards(make_user) -> None:  # type: ignore[no-untyped-def]
     admin = await make_user("admin@example.com", role=Role.ADMIN)
     provider = await _provider(admin, "openai", "OpenAI Production")
-    await admin.post(f"{BASE}/providers/{provider['id']}/secret", json={"api_key": "sk-proj-abcdefghijklmnop7Xk2"})
-    await admin.put(f"{BASE}/providers/{provider['id']}/models", json={"models": [{"model": "gpt-5"}], "default_model": "gpt-5"})
-    agent = (await admin.post(f"{BASE}/agents", json={"name": "Master Design Agent", "command": "/master", "version": {"instructions": "x", "provider_id": provider["id"], "model": "gpt-5"}})).json()
+    await admin.post(
+        f"{BASE}/providers/{provider['id']}/secret", json={"api_key": "sk-proj-abcdefghijklmnop7Xk2"}
+    )
+    await admin.put(
+        f"{BASE}/providers/{provider['id']}/models",
+        json={"models": [{"model": "gpt-5"}], "default_model": "gpt-5"},
+    )
+    agent = (
+        await admin.post(
+            f"{BASE}/agents",
+            json={
+                "name": "Master Design Agent",
+                "command": "/master",
+                "version": {"instructions": "x", "provider_id": provider["id"], "model": "gpt-5"},
+            },
+        )
+    ).json()
     await admin.post(f"{BASE}/agents/{agent['id']}/publish", json={})
     res = await admin.get(f"{BASE}/integrations/overview")
     assert res.status_code == 200, res.text
     body = res.json()
     assert {t["type"] for t in body["provider_types"]} == {"openai", "echo"}
     card = next(c for c in body["providers"] if c["provider"]["id"] == provider["id"])
-    assert card["used_by"] == ["Master Design Agent"] and card["provider"]["key_preview"] == "sk-proj-••••••••7Xk2"
+    assert (
+        card["used_by"] == ["Master Design Agent"]
+        and card["provider"]["key_preview"] == "sk-proj-••••••••7Xk2"
+    )
     assert card["provider"]["models"][0]["resolved_capabilities"]["supports_reasoning"] is True
     assert "abcdefghijklmnop" not in res.text
     models = await admin.get(f"{BASE}/providers/{provider['id']}/supported-models")
     assert models.status_code == 200 and any(m["model"] == "gpt-5" for m in models.json())
+
+
+async def test_skill_reorder_toggle_and_sandbox_test(make_user) -> None:  # type: ignore[no-untyped-def]
+    admin = await make_user("admin@example.com", role=Role.ADMIN)
+    provider = await _provider(admin)
+    await admin.put(
+        f"{BASE}/providers/{provider['id']}/models",
+        json={"models": [{"model": "echo-1"}], "default_model": "echo-1"},
+    )
+    ids = []
+    for name in ("Design Analysis", "Prompt Enhancement", "Brand Guideline Analysis"):
+        s = (
+            await admin.post(
+                f"{BASE}/skills", json={"name": name, "version": {"instructions": f"Apply {name}."}}
+            )
+        ).json()
+        await admin.post(f"{BASE}/skills/{s['id']}/publish", json={})
+        ids.append(s["id"])
+    agent = (
+        await admin.post(
+            f"{BASE}/agents",
+            json={
+                "name": "Master Design Agent",
+                "command": "/master",
+                "version": {"instructions": "You design.", "provider_id": provider["id"], "model": "echo-1"},
+            },
+        )
+    ).json()
+    for i, sid in enumerate(ids):
+        await admin.post(f"{BASE}/agents/{agent['id']}/skills/{sid}", json={"priority": 100 - i})
+    # reorder: brand first, then design, then prompt
+    res = await admin.put(
+        f"{BASE}/agents/{agent['id']}/skills/order", json={"skill_ids": [ids[2], ids[0], ids[1]]}
+    )
+    assert res.status_code == 200, res.text
+    order = [(b["skill_slug"], b["priority"]) for b in res.json()["draft_version"]["skills"]]
+    assert order == [("brand-guideline-analysis", 10), ("design-analysis", 20), ("prompt-enhancement", 30)]
+    # disable one binding without detaching it
+    res = await admin.post(
+        f"{BASE}/agents/{agent['id']}/skills/{ids[1]}", json={"enabled": False, "priority": 30}
+    )
+    assert (
+        next(b for b in res.json()["draft_version"]["skills"] if b["skill_id"] == ids[1])["enabled"] is False
+    )
+    # test a skill draft against the agent: the composed prompt includes the draft text, disabled skill excluded
+    await admin.post(
+        f"{BASE}/skills/{ids[0]}/versions", json={"instructions": "Apply Design Analysis v2 (draft)."}
+    )
+    res = await admin.post(
+        f"{BASE}/skills/{ids[0]}/test",
+        json={"agent_id": agent["id"], "input": "Create a premium healthcare poster"},
+    )
+    assert res.status_code == 200, res.text
+    sections = res.json()["instruction_sections"]
+    assert "skill:design-analysis@2" in sections and "skill:brand-guideline-analysis@1" in sections
+    assert not any(s.startswith("skill:prompt-enhancement") for s in sections)
+    # image models are refused as agent models at publish time
+    openai = await _provider(admin, "openai", "OpenAI Production")
+    await admin.put(
+        f"{BASE}/providers/{openai['id']}/models",
+        json={"models": [{"model": "gpt-image-1"}, {"model": "gpt-5"}], "default_model": "gpt-5"},
+    )
+    img = (
+        await admin.post(
+            f"{BASE}/agents",
+            json={
+                "name": "Img",
+                "command": "/img",
+                "version": {"instructions": "x", "provider_id": openai["id"], "model": "gpt-image-1"},
+            },
+        )
+    ).json()
+    res = await admin.post(f"{BASE}/agents/{img['id']}/publish", json={})
+    assert res.status_code == 422 and any("image model" in p for p in res.json()["error"]["details"])
+    bad_temp = (
+        await admin.post(
+            f"{BASE}/agents",
+            json={
+                "name": "Temp",
+                "command": "/temp",
+                "version": {
+                    "instructions": "x",
+                    "provider_id": openai["id"],
+                    "model": "gpt-5",
+                    "model_settings": {"temperature": 0.3},
+                },
+            },
+        )
+    ).json()
+    res = await admin.post(f"{BASE}/agents/{bad_temp['id']}/publish", json={})
+    assert res.status_code == 422 and any("temperature" in p for p in res.json()["error"]["details"])

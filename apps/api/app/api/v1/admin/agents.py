@@ -18,6 +18,7 @@ from app.schemas.admin import (
     HandoffIn,
     PublishRequest,
     SkillBindingIn,
+    SkillOrderIn,
     ToolBindingIn,
 )
 from app.services.admin_serializers import agent_out, agent_summary_out
@@ -74,6 +75,11 @@ async def attach_skill(
     return await agent_out(
         session, await AgentService(session, ctx).attach_skill(agent_id, skill_id, body or SkillBindingIn())
     )
+
+
+@router.put("/{agent_id}/skills/order", response_model=AgentOut)
+async def reorder_skills(agent_id: uuid.UUID, body: SkillOrderIn, ctx: AdminAuth, session: DB) -> AgentOut:
+    return await agent_out(session, await AgentService(session, ctx).reorder_skills(agent_id, body.skill_ids))
 
 
 @router.delete("/{agent_id}/skills/{skill_id}", response_model=AgentOut)

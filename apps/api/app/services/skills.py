@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from typing import Any
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,8 +17,17 @@ from app.domain.slugs import slugify
 from app.models.skills import Skill, SkillFile, SkillVersion
 from app.models.tools import Tool
 from app.ports.storage import ObjectStorage
-from app.schemas.admin import PublishRequest, SkillCreate, SkillUpdate, SkillVersionInput
+from app.schemas.admin import (
+    AgentTestOut,
+    AgentTestRequest,
+    PublishRequest,
+    SkillCreate,
+    SkillTestRequest,
+    SkillUpdate,
+    SkillVersionInput,
+)
 from app.services import audit
+from app.services.composer import ComposedSkill
 
 VERSION_FIELDS = (
     "instructions",
@@ -271,3 +281,34 @@ class SkillService:
             after={"version": draft.version, "filename": safe_name, "size": stored.size},
         )
         return await self.get(skill.id)
+
+    async def test(self, skill_id: uuid.UUID, data: SkillTestRequest, adapters: Any) -> AgentTestOut:
+        """Run an agent's sandbox test with this skill's draft (or active) version injected."""
+        from app.services.agents import AgentService
+
+        skill = await self.get(skill_id)
+        version = (
+            (self.draft_of(skill) if data.use_draft else None)
+            or self.active_of(skill)
+            or self.draft_of(skill)
+        )
+        if version is None:
+            raise ValidationFailed("Skill has no version to test", code="no_version")
+        composed = ComposedSkill(
+            name=skill.name,
+            slug=skill.slug,
+            version=version.version,
+            instructions=version.instructions,
+            priority=version.default_priority,
+            variables={**version.variables_defaults, **data.variables},
+        )
+        result = await AgentService(self.session, self.ctx).test(
+            data.agent_id,
+            AgentTestRequest(input=data.input, use_draft=True),
+            adapters,
+            extra_skills=[composed],
+        )
+        await self._audit(
+            "skill.tested", skill.id, after={"version": version.version, "agent_id": str(data.agent_id)}
+        )
+        return result

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import Select, select
@@ -36,7 +37,8 @@ from app.schemas.admin import (
 )
 from app.services import audit
 from app.services.agent_factory import build_runtime_agent
-from app.services.composer import ComposedSkill  # noqa: F401 - re-exported for tests
+from app.services.composer import ComposedSkill
+from app.services.providers import provider_adapters
 
 VERSION_FIELDS = (
     "provider_id",
@@ -301,6 +303,21 @@ class AgentService:
                         problems.append(
                             f"model '{version.model}' is not in the provider allowlist {sorted(allowed)}"
                         )
+                    overrides = next(
+                        (m.capabilities for m in provider.models if m.model == version.model), None
+                    )
+                    adapter = provider_adapters().get(provider.type)
+                    if adapter is not None:
+                        caps = adapter.model_capabilities(version.model, overrides)
+                        if caps.supports_image_generation and not caps.supports_tools:
+                            problems.append(
+                                f"model '{version.model}' is an image model; agents need a chat/reasoning "
+                                "model (image models are used through the image.generate tool)"
+                            )
+                        if "temperature" in version.model_settings and not caps.supports_temperature:
+                            problems.append(f"model '{version.model}' does not accept temperature; remove it")
+                        if "reasoning_effort" in version.model_settings and not caps.supports_reasoning:
+                            problems.append(f"model '{version.model}' does not accept reasoning settings")
         try:
             await self._check_command_free(agent, agent.command)
         except Conflict as exc:
@@ -431,6 +448,32 @@ class AgentService:
         )
         return await self._reload(agent)
 
+    async def reorder_skills(self, agent_id: uuid.UUID, skill_ids: Sequence[uuid.UUID]) -> Agent:
+        agent = await self.get(agent_id)
+        draft = await self._ensure_draft(agent)
+        by_skill = {b.skill_id: b for b in draft.skill_bindings}
+        unknown = [str(s) for s in skill_ids if s not in by_skill]
+        if unknown:
+            raise ValidationFailed(
+                "skill_ids must all be attached to the draft", code="binding_not_found", details=unknown
+            )
+        for i, sid in enumerate(skill_ids):
+            by_skill[sid].priority = (i + 1) * 10
+        rest = [
+            b
+            for b in sorted(draft.skill_bindings, key=lambda b: b.priority)
+            if b.skill_id not in set(skill_ids)
+        ]
+        for j, b in enumerate(rest):
+            b.priority = (len(skill_ids) + j + 1) * 10
+        await self.session.flush()
+        await self._audit(
+            "agent.skills_reordered",
+            agent.id,
+            after={"version": draft.version, "order": [str(s) for s in skill_ids]},
+        )
+        return await self._reload(agent)
+
     async def detach_skill(self, agent_id: uuid.UUID, skill_id: uuid.UUID) -> Agent:
         agent = await self.get(agent_id)
         draft = await self._ensure_draft(agent)
@@ -540,7 +583,14 @@ class AgentService:
         return await self._reload(agent)
 
     # ------------------------------------------------------------------ sandbox test
-    async def test(self, agent_id: uuid.UUID, data: AgentTestRequest, adapters: Adapters) -> AgentTestOut:
+    async def test(
+        self,
+        agent_id: uuid.UUID,
+        data: AgentTestRequest,
+        adapters: Adapters,
+        *,
+        extra_skills: Sequence[ComposedSkill] | None = None,
+    ) -> AgentTestOut:
         agent = await self.get(agent_id)
         version = (
             (self.draft_of(agent) if data.use_draft else None)
@@ -560,7 +610,13 @@ class AgentService:
                 if workspace is None or workspace.organization_id != self.org_id:
                     project, workspace = None, None
         resolved = await build_runtime_agent(
-            self.session, agent, version, organization=organization, workspace=workspace, project=project
+            self.session,
+            agent,
+            version,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            extra_skills=extra_skills,
         )
         provider_adapter = adapters.providers.get(resolved.provider.type)
         if provider_adapter is None:

@@ -7,6 +7,7 @@ endpoint now and by the run executor from Phase 4 onwards.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -117,6 +118,7 @@ async def build_runtime_agent(
     project: Project | None = None,
     context_summary: str | None = None,
     user_request: str | None = None,
+    extra_skills: Sequence[ComposedSkill] | None = None,
 ) -> ResolvedAgent:
     if version.provider_id is None or not version.model:
         raise ValidationFailed("Agent version has no provider/model configured", code="agent_not_configured")
@@ -127,6 +129,10 @@ async def build_runtime_agent(
         raise ValidationFailed(f"Provider '{provider.name}' is disabled", code="provider_disabled")
 
     skills = await resolve_skills(session, version)
+    if extra_skills:
+        # a sandbox test replaces any attached copy of the same skill with the version under test
+        replaced = {e.slug for e in extra_skills}
+        skills = [s for s in skills if s.slug not in replaced] + list(extra_skills)
     tools, tool_ids = await resolve_tools(session, version)
     project_rules: list[str] = []
     if project is not None:

@@ -55,6 +55,8 @@ export const skillsApi = {
   saveDraft: (id: string, body: SkillVersionInput) => api<SkillOut>(`${A}/skills/${id}/versions`, { method: "POST", body }),
   publish: (id: string, body: { version_id?: string; change_note?: string } = {}) =>
     api<SkillOut>(`${A}/skills/${id}/publish`, { method: "POST", body }),
+  test: (id: string, body: { agent_id: string; input: string; use_draft?: boolean; variables?: Record<string, unknown> }) =>
+    api<AgentTestOut>(`${A}/skills/${id}/test`, { method: "POST", body }),
   async uploadFile(id: string, file: File, description?: string): Promise<SkillOut> {
     const form = new FormData();
     form.append("file", file);
@@ -83,10 +85,11 @@ export const agentsApi = {
     api<AgentOut>(`${A}/agents/${id}/publish`, { method: "POST", body }),
   test: (id: string, body: { input: string; use_draft: boolean; project_id?: string }) =>
     api<AgentTestOut>(`${A}/agents/${id}/test`, { method: "POST", body }),
-  attachSkill: (id: string, skillId: string, body: { priority?: number; skill_version_id?: string | null; variables?: Record<string, unknown> }) =>
+  reorderSkills: (id: string, skill_ids: string[]) => api<AgentOut>(`${A}/agents/${id}/skills/order`, { method: "PUT", body: { skill_ids } }),
+  attachSkill: (id: string, skillId: string, body: { priority?: number; skill_version_id?: string | null; variables?: Record<string, unknown>; enabled?: boolean }) =>
     api<AgentOut>(`${A}/agents/${id}/skills/${skillId}`, { method: "POST", body }),
   detachSkill: (id: string, skillId: string) => api<AgentOut>(`${A}/agents/${id}/skills/${skillId}`, { method: "DELETE" }),
-  attachTool: (id: string, toolId: string, body: { max_calls_per_run?: number | null }) =>
+  attachTool: (id: string, toolId: string, body: { max_calls_per_run?: number | null; enabled?: boolean }) =>
     api<AgentOut>(`${A}/agents/${id}/tools/${toolId}`, { method: "POST", body }),
   detachTool: (id: string, toolId: string) => api<AgentOut>(`${A}/agents/${id}/tools/${toolId}`, { method: "DELETE" }),
   addHandoff: (id: string, targetId: string, body: { routing_hint: string; is_failure_route: boolean }) =>

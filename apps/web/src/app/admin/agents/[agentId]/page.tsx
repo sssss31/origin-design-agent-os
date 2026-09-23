@@ -8,6 +8,7 @@ import { Badge, Card, CardTitle, EmptyState, ErrorText } from "@/components/ui/C
 import { Field, Input, Textarea } from "@/components/ui/Input";
 import { JsonField, Select } from "@/components/ui/JsonField";
 import { Tabs } from "@/components/ui/Tabs";
+import Link from "next/link";
 import { agentsApi, providersApi, skillsApi, toolsApi } from "@/lib/api/admin";
 import type { AgentOut, AgentSummaryOut, AgentTestOut, AgentVersionInput, AgentVersionOut, ProviderOut, SkillOut, ToolOut } from "@/types/admin";
 
@@ -17,7 +18,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "instructions", label: "Instructions" },
   { id: "skills", label: "Skills" },
   { id: "tools", label: "Tools" },
-  { id: "model", label: "Model" },
+  { id: "model", label: "AI Provider" },
   { id: "connections", label: "Connections" },
   { id: "schemas", label: "Schemas" },
   { id: "versions", label: "Versions" },
@@ -92,7 +93,7 @@ export default function AgentEditorPage() {
         {tab === "instructions" ? <InstructionsTab version={working} onSave={(b) => mutate(() => agentsApi.saveDraft(agent.id, b), "Draft saved")} /> : null}
         {tab === "skills" ? <SkillsTab agent={agent} version={working} skills={skills} mutate={mutate} /> : null}
         {tab === "tools" ? <ToolsTab agent={agent} version={working} tools={tools} mutate={mutate} /> : null}
-        {tab === "model" ? <ModelTab version={working} providers={providers} onSave={(b) => mutate(() => agentsApi.saveDraft(agent.id, b), "Draft saved")} /> : null}
+        {tab === "model" ? <ModelTab agent={agent} version={working} providers={providers} onSave={(b) => mutate(() => agentsApi.saveDraft(agent.id, b), "Draft saved")} onSaveGeneral={(b) => mutate(() => agentsApi.update(agent.id, b), "Saved")} /> : null}
         {tab === "connections" ? <ConnectionsTab agent={agent} version={working} others={others} mutate={mutate} onSave={(b) => mutate(() => agentsApi.saveDraft(agent.id, b), "Draft saved")} /> : null}
         {tab === "schemas" ? <SchemasTab version={working} onSave={(b) => mutate(() => agentsApi.saveDraft(agent.id, b), "Draft saved")} /> : null}
         {tab === "versions" ? <VersionsTab agent={agent} mutate={mutate} /> : null}
@@ -149,45 +150,84 @@ function InstructionsTab({ version, onSave }: { version: AgentVersionOut | null;
 
 function SkillsTab({ agent, version, skills, mutate }: { agent: AgentOut; version: AgentVersionOut | null; skills: SkillOut[]; mutate: (fn: () => Promise<AgentOut>, msg: string) => void }) {
   const [skillId, setSkillId] = useState("");
-  const [priority, setPriority] = useState("100");
   const [pin, setPin] = useState(false);
-  const attached = version?.skills ?? [];
+  const [testing, setTesting] = useState<string | null>(null);
+  const [testInput, setTestInput] = useState("Create a premium healthcare poster");
+  const [testResult, setTestResult] = useState<AgentTestOut | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+  const attached = [...(version?.skills ?? [])].sort((a, b) => a.priority - b.priority);
   const available = skills.filter((s) => !attached.some((b) => b.skill_id === s.id));
+  const move = (index: number, dir: -1 | 1) => {
+    const ids = attached.map((b) => b.skill_id);
+    const j = index + dir;
+    if (j < 0 || j >= ids.length) return;
+    [ids[index], ids[j]] = [ids[j]!, ids[index]!];
+    mutate(() => agentsApi.reorderSkills(agent.id, ids), "Order updated");
+  };
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
       <Card>
-        <CardTitle>Attached skills (lowest priority number first)</CardTitle>
-        {attached.length === 0 ? <EmptyState title="No skills attached" /> : null}
+        <CardTitle>Attached skills (composed in this order)</CardTitle>
+        {attached.length === 0 ? <EmptyState title="No skills attached" body="Skills are reusable instruction packages: Design Analysis, Prompt Enhancement, Brand Guideline Analysis…" /> : null}
         <ul className="divide-y divide-border">
-          {attached.map((b) => (
-            <li key={b.id} className="flex items-center justify-between py-2 text-sm">
-              <span>
-                {b.skill_name} <span className="font-mono text-xs text-muted">{b.skill_slug}</span>{" "}
-                <Badge>{b.skill_version_id ? "pinned" : "follows active"}</Badge>
-              </span>
-              <span className="flex items-center gap-2">
-                <Input className="w-20" type="number" defaultValue={b.priority} onBlur={(e) => mutate(() => agentsApi.attachSkill(agent.id, b.skill_id, { priority: Number(e.target.value), skill_version_id: b.skill_version_id, variables: b.variables }), "Priority updated")} aria-label="Priority" />
-                <Button variant="ghost" onClick={() => mutate(() => agentsApi.detachSkill(agent.id, b.skill_id), "Skill detached")}>Detach</Button>
-              </span>
-            </li>
-          ))}
+          {attached.map((b, i) => {
+            const skill = skills.find((s) => s.id === b.skill_id);
+            return (
+              <li key={b.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                <span className="flex items-center gap-2">
+                  <span className="flex flex-col">
+                    <button aria-label="Move up" className="text-faint hover:text-text disabled:opacity-30" disabled={i === 0} onClick={() => move(i, -1)}>▲</button>
+                    <button aria-label="Move down" className="text-faint hover:text-text disabled:opacity-30" disabled={i === attached.length - 1} onClick={() => move(i, 1)}>▼</button>
+                  </span>
+                  <span className={b.enabled ? "" : "text-muted line-through"}>
+                    {b.skill_name} <span className="font-mono text-xs text-muted">{b.skill_slug}</span>{" "}
+                    <Badge>{b.skill_version_id ? "pinned" : `v${skill?.active_version?.version ?? "?"} (follows active)`}</Badge>
+                    {skill?.draft_version ? <Badge tone="warning">draft pending</Badge> : null}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <Button variant="ghost" onClick={() => mutate(() => agentsApi.attachSkill(agent.id, b.skill_id, { priority: b.priority, skill_version_id: b.skill_version_id, variables: b.variables, enabled: !b.enabled }), b.enabled ? "Skill disabled" : "Skill enabled")}>{b.enabled ? "Disable" : "Enable"}</Button>
+                  <Link href={`/admin/skills/${b.skill_id}`} className="rounded-md px-2 py-1 text-xs text-accent hover:bg-surface-2">Edit</Link>
+                  <Button variant="ghost" onClick={() => { setTesting(b.skill_id); setTestResult(null); setTestError(null); }}>Test</Button>
+                  <Button variant="ghost" onClick={() => mutate(() => agentsApi.detachSkill(agent.id, b.skill_id), "Skill removed")}>Remove</Button>
+                </span>
+              </li>
+            );
+          })}
         </ul>
+        {testing ? (
+          <div className="mt-3 space-y-2 rounded-md border border-border p-3">
+            <p className="text-xs font-medium">Test “{skills.find((s) => s.id === testing)?.name}” with this agent (draft version of the skill if one exists)</p>
+            <Textarea rows={2} value={testInput} onChange={(e) => setTestInput(e.target.value)} />
+            <div className="flex gap-2">
+              <Button onClick={() => { setTestError(null); skillsApi.test(testing, { agent_id: agent.id, input: testInput }).then(setTestResult).catch((err: unknown) => setTestError(err instanceof Error ? err.message : "Test failed")); }}>Run</Button>
+              <Button variant="ghost" onClick={() => setTesting(null)}>Close</Button>
+            </div>
+            <ErrorText>{testError}</ErrorText>
+            {testResult ? (
+              <div className="text-xs">
+                <p><b>Sections:</b> {testResult.instruction_sections.join(" → ")}</p>
+                <pre className="mt-1 whitespace-pre-wrap rounded-md bg-surface-2 p-2">{testResult.output_text || "(no text)"}</pre>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </Card>
       <Card className="space-y-3">
-        <CardTitle>Attach skill</CardTitle>
+        <CardTitle>Add skill</CardTitle>
         <Select label="Skill" value={skillId} onChange={setSkillId} options={[{ value: "", label: "Choose…" }, ...available.map((s) => ({ value: s.id, label: `${s.name} (${s.status})` }))]} />
-        <Field label="Priority"><Input type="number" value={priority} onChange={(e) => setPriority(e.target.value)} /></Field>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={pin} onChange={(e) => setPin(e.target.checked)} /> Pin to the currently active skill version</label>
         <Button
           disabled={!skillId}
           onClick={() => {
             const skill = skills.find((s) => s.id === skillId);
-            mutate(() => agentsApi.attachSkill(agent.id, skillId, { priority: Number(priority), skill_version_id: pin ? skill?.active_version_id ?? null : null }), "Skill attached to draft");
+            mutate(() => agentsApi.attachSkill(agent.id, skillId, { priority: (attached.length + 1) * 10, skill_version_id: pin ? skill?.active_version_id ?? null : null }), "Skill attached to draft");
             setSkillId("");
           }}
         >
-          Attach
+          Add skill
         </Button>
+        <p className="text-[11px] text-muted">Need a new one? <Link href="/admin/skills?new=1" className="text-accent">Create a skill</Link>. Skills are versioned independently; agents follow the active version unless pinned.</p>
       </Card>
     </div>
   );
@@ -197,8 +237,8 @@ function ToolsTab({ agent, version, tools, mutate }: { agent: AgentOut; version:
   const bound = version?.tools ?? [];
   return (
     <Card>
-      <CardTitle>Tool permissions for this agent</CardTitle>
-      <p className="mb-3 text-xs text-muted">An agent can only call tools enabled here. Changes apply to the draft and take effect on publish.</p>
+      <CardTitle>Tools this agent may call</CardTitle>
+      <p className="mb-3 text-xs text-muted">Agent → Skills → Tools → API Provider: an agent can only call tools bound here; each tool runs through its own executor (built-in function, custom REST API, MCP). Changes apply to the draft and take effect on publish.</p>
       {tools.length === 0 ? <EmptyState title="No tools defined" body="Create tools under Admin → Tools." /> : null}
       <ul className="divide-y divide-border">
         {tools.map((t) => {
@@ -212,7 +252,9 @@ function ToolsTab({ agent, version, tools, mutate }: { agent: AgentOut; version:
               <span className="flex items-center gap-2">
                 {b ? (
                   <>
-                    <Input className="w-24" type="number" placeholder="max calls" defaultValue={b.max_calls_per_run ?? ""} onBlur={(e) => mutate(() => agentsApi.attachTool(agent.id, t.id, { max_calls_per_run: e.target.value ? Number(e.target.value) : null }), "Limit updated")} aria-label="Max calls per run" />
+                    {!b.enabled ? <Badge tone="warning">disabled for this agent</Badge> : null}
+                    <Input className="w-24" type="number" placeholder="max calls" defaultValue={b.max_calls_per_run ?? ""} onBlur={(e) => mutate(() => agentsApi.attachTool(agent.id, t.id, { max_calls_per_run: e.target.value ? Number(e.target.value) : null, enabled: b.enabled }), "Limit updated")} aria-label="Max calls per run" />
+                    <Button variant="ghost" onClick={() => mutate(() => agentsApi.attachTool(agent.id, t.id, { max_calls_per_run: b.max_calls_per_run, enabled: !b.enabled }), b.enabled ? "Tool disabled" : "Tool enabled")}>{b.enabled ? "Disable" : "Enable"}</Button>
                     <Button variant="ghost" onClick={() => mutate(() => agentsApi.detachTool(agent.id, t.id), "Tool removed")}>Remove</Button>
                   </>
                 ) : (
@@ -227,31 +269,80 @@ function ToolsTab({ agent, version, tools, mutate }: { agent: AgentOut; version:
   );
 }
 
-function ModelTab({ version, providers, onSave }: { version: AgentVersionOut | null; providers: ProviderOut[]; onSave: (b: AgentVersionInput) => void }) {
+function ModelTab({ agent, version, providers, onSave, onSaveGeneral }: { agent: AgentOut; version: AgentVersionOut | null; providers: ProviderOut[]; onSave: (b: AgentVersionInput) => void; onSaveGeneral: (b: Partial<Pick<AgentOut, "name" | "command">>) => void }) {
   const [providerId, setProviderId] = useState(version?.provider_id ?? "");
   const [model, setModel] = useState(version?.model ?? "");
-  const [settings, setSettings] = useState<Record<string, unknown>>(version?.model_settings ?? {});
+  const [name, setName] = useState(agent.name);
+  const [command, setCommand] = useState(agent.command);
+  const [instructions, setInstructions] = useState(version?.instructions ?? "");
+  const settings = version?.model_settings ?? {};
+  const [temperature, setTemperature] = useState(settings.temperature != null ? String(settings.temperature) : "");
+  const [reasoning, setReasoning] = useState(typeof settings.reasoning_effort === "string" ? settings.reasoning_effort : typeof settings.reasoning === "object" && settings.reasoning ? String((settings.reasoning as { effort?: string }).effort ?? "") : "");
+  const [maxOut, setMaxOut] = useState(settings.max_output_tokens != null ? String(settings.max_output_tokens) : "");
   const [maxSteps, setMaxSteps] = useState(String(version?.max_steps ?? 20));
   const [timeout, setTimeoutS] = useState(String(version?.timeout_seconds ?? 300));
   const [clarify, setClarify] = useState(version?.can_ask_clarification ?? true);
   const provider = providers.find((p) => p.id === providerId);
-  const allowed = provider?.models.filter((m) => m.enabled) ?? [];
+  const allowed = provider?.models.filter((m) => m.enabled && !m.resolved_capabilities.supports_image_generation) ?? [];
+  const caps = provider?.models.find((m) => m.model === model)?.resolved_capabilities ?? {};
+  const unconfigured = provider && provider.type !== "echo" && !provider.configured;
+  const save = () => {
+    const model_settings: Record<string, unknown> = {};
+    if (caps.supports_temperature && temperature !== "") model_settings.temperature = Number(temperature);
+    if (caps.supports_reasoning && reasoning) model_settings.reasoning_effort = reasoning;
+    if (maxOut !== "") model_settings.max_output_tokens = Number(maxOut);
+    onSave({ provider_id: providerId || null, model: model || null, instructions, model_settings, max_steps: Number(maxSteps), timeout_seconds: Number(timeout), can_ask_clarification: clarify });
+    if (name !== agent.name || command !== agent.command) onSaveGeneral({ name, command });
+  };
   return (
-    <Card className="max-w-2xl space-y-3">
-      <Select label="Provider" value={providerId} onChange={(v) => { setProviderId(v); setModel(providers.find((p) => p.id === v)?.default_model ?? ""); }} options={[{ value: "", label: "Choose…" }, ...providers.map((p) => ({ value: p.id, label: `${p.name} (${p.type}${p.enabled ? "" : ", disabled"})` }))]} />
-      {allowed.length > 0 ? (
-        <Select label="Model (allowlist)" value={model} onChange={setModel} options={[{ value: "", label: "Choose…" }, ...allowed.map((m) => ({ value: m.model, label: m.display_name ? `${m.display_name} — ${m.model}` : m.model }))]} />
-      ) : (
-        <Field label="Model" hint="This provider has no allowlist yet; any model id is accepted."><Input value={model} onChange={(e) => setModel(e.target.value)} /></Field>
-      )}
-      <JsonField label="Model settings (temperature, reasoning, …)" value={settings} onChange={setSettings} rows={4} />
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Max steps"><Input type="number" value={maxSteps} onChange={(e) => setMaxSteps(e.target.value)} /></Field>
-        <Field label="Timeout (seconds)"><Input type="number" value={timeout} onChange={(e) => setTimeoutS(e.target.value)} /></Field>
-      </div>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={clarify} onChange={(e) => setClarify(e.target.checked)} /> May pause the run to ask a blocking clarification question</label>
-      <Button onClick={() => onSave({ provider_id: providerId || null, model: model || null, model_settings: settings, max_steps: Number(maxSteps), timeout_seconds: Number(timeout), can_ask_clarification: clarify })}>Save draft</Button>
-    </Card>
+    <div className="grid gap-4 lg:grid-cols-[1fr_300px]">
+      <Card className="space-y-4">
+        <div>
+          <CardTitle>AI Provider</CardTitle>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Select label="Provider" value={providerId} onChange={(v) => { setProviderId(v); setModel(providers.find((p) => p.id === v)?.default_model ?? ""); }} options={[{ value: "", label: "Choose…" }, ...providers.map((p) => ({ value: p.id, label: `${p.name}${p.enabled ? "" : " (disabled)"}${p.type !== "echo" && !p.configured ? " — no key" : ""}` }))]} />
+            {allowed.length > 0 ? (
+              <Select label="Model" value={model} onChange={setModel} options={[{ value: "", label: "Choose…" }, ...allowed.map((m) => ({ value: m.model, label: m.display_name ? `${m.display_name} — ${m.model}` : m.model }))]} />
+            ) : (
+              <Field label="Model" hint={provider ? "No allowlist yet — set allowed models under API Integrations." : "Pick a provider first."}><Input value={model} onChange={(e) => setModel(e.target.value)} disabled={!provider} /></Field>
+            )}
+          </div>
+          {unconfigured ? <p className="mt-2 text-xs text-warning">This provider has no API key. Add one under Admin → API Integrations before publishing.</p> : null}
+          {caps.notes ? <p className="mt-2 text-[11px] text-muted">{caps.notes}</p> : null}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Agent command"><Input value={command} onChange={(e) => setCommand(e.target.value)} /></Field>
+          <Field label="Agent name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
+        </div>
+        <Field label="System instructions"><Textarea rows={12} className="font-mono text-xs" value={instructions} onChange={(e) => setInstructions(e.target.value)} /></Field>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {caps.supports_temperature ? <Field label="Temperature" hint="0 = deterministic, 2 = creative"><Input type="number" step="0.1" min={0} max={2} value={temperature} onChange={(e) => setTemperature(e.target.value)} placeholder="provider default" /></Field> : null}
+          {caps.supports_reasoning ? (
+            <Select label="Reasoning effort" value={reasoning} onChange={setReasoning} options={[{ value: "", label: "provider default" }, { value: "minimal", label: "minimal" }, { value: "low", label: "low" }, { value: "medium", label: "medium" }, { value: "high", label: "high" }]} />
+          ) : null}
+          <Field label="Max output tokens"><Input type="number" min={1} value={maxOut} onChange={(e) => setMaxOut(e.target.value)} placeholder={caps.max_output_tokens ? `up to ${caps.max_output_tokens}` : "provider default"} /></Field>
+        </div>
+        {model && !caps.supports_temperature && !caps.supports_reasoning ? <p className="text-[11px] text-muted">This model exposes no sampling controls; only max output tokens and tool settings are sent.</p> : null}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Max steps"><Input type="number" value={maxSteps} onChange={(e) => setMaxSteps(e.target.value)} /></Field>
+          <Field label="Timeout (seconds)"><Input type="number" value={timeout} onChange={(e) => setTimeoutS(e.target.value)} /></Field>
+        </div>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={clarify} onChange={(e) => setClarify(e.target.checked)} /> May pause the run to ask a blocking clarification question</label>
+        <Button onClick={save}>Save draft</Button>
+      </Card>
+      <Card>
+        <CardTitle>Model capabilities</CardTitle>
+        {model ? (
+          <ul className="space-y-1 text-xs">
+            {([["Temperature / top_p", caps.supports_temperature], ["Reasoning effort", caps.supports_reasoning], ["Vision input", caps.supports_vision], ["Tool calling", caps.supports_tools], ["Structured output", caps.supports_structured_output]] as const).map(([label, ok]) => (
+              <li key={label} className="flex justify-between"><span className="text-muted">{label}</span><span>{ok ? "✓" : "—"}</span></li>
+            ))}
+            {caps.context_window ? <li className="flex justify-between"><span className="text-muted">Context window</span><span>{caps.context_window.toLocaleString()}</span></li> : null}
+          </ul>
+        ) : <p className="text-xs text-muted">Choose a model to see which parameters it accepts. Unsupported parameters are never sent to the provider.</p>}
+        <p className="mt-3 text-[11px] text-muted">Every change here creates a new draft version; publish to make it live, or roll back from Versions.</p>
+      </Card>
+    </div>
   );
 }
 
