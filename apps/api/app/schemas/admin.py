@@ -479,6 +479,40 @@ class AgentVersionOut(ORMModel):
     handoffs: list[HandoffOut] = Field(default_factory=list)
 
 
+ConnectionType = Literal["origin", "openai_responses", "http"]
+
+
+class AgentConnectionIn(BaseModel):
+    """Workspace V0 §3/§27: the basic connection an admin edits. The key is write-only."""
+
+    connection_type: ConnectionType
+    api_endpoint: str | None = Field(default=None, max_length=2000)
+    api_key: str | None = Field(
+        default=None, min_length=8, max_length=50_000, description="write-only; omit to keep"
+    )
+    config: dict[str, Any] = Field(default_factory=dict)
+    clear_api_key: bool = False
+
+    @field_validator("api_endpoint")
+    @classmethod
+    def _endpoint(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        if v and not v.lower().startswith(("https://", "http://")):
+            raise ValueError("endpoint must be an absolute http(s) URL")
+        return v or None
+
+
+class AgentConnectionOut(BaseModel):
+    connection_type: str
+    api_endpoint: str | None
+    configured: bool
+    api_key_preview: str | None
+    config: dict[str, Any]
+    connection_status: str
+    connection_message: str | None
+    connection_tested_at: datetime | None
+
+
 class AgentSummaryOut(ORMModel):
     id: uuid.UUID
     organization_id: uuid.UUID
@@ -494,6 +528,7 @@ class AgentSummaryOut(ORMModel):
     active_version_number: int | None = None
     has_draft: bool = False
     model: str | None = None
+    connection: AgentConnectionOut | None = None
 
 
 class AgentOut(AgentSummaryOut):

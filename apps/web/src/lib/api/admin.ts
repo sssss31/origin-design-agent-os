@@ -85,6 +85,10 @@ export const agentsApi = {
   get: (id: string) => api<AgentOut>(`${A}/agents/${id}`),
   create: (body: { name: string; command: string; description?: string; is_manager?: boolean; version?: AgentVersionInput }) =>
     api<AgentOut>(`${A}/agents`, { method: "POST", body }),
+  setConnection: (id: string, body: { connection_type: string; api_endpoint?: string | null; api_key?: string; config?: Record<string, unknown>; clear_api_key?: boolean }) =>
+    api<AgentOut>(`${A}/agents/${id}/connection`, { method: "PUT", body }),
+  testConnection: (id: string) => api<ProviderConnectionOut>(`${A}/agents/${id}/test-connection`, { method: "POST" }),
+  seedRegistry: (connection_type: "openai_responses" | "http") => api<{ created: number; skipped: number; commands: string[] }>(`${A}/seed/agent-registry`, { method: "POST", body: { connection_type } }),
   importCurl: (body: { curl: string; name: string; command: string; description?: string; instructions?: string; publish?: boolean }) =>
     api<AgentImportOut>(`${A}/agents/import-curl`, { method: "POST", body }),
   update: (id: string, body: Partial<Pick<AgentOut, "name" | "command" | "description" | "is_manager" | "status">>) =>

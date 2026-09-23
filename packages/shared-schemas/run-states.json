@@ -15,6 +15,9 @@
     "run.failed",
     "run.cancelled",
     "provider.retry",
+    "agent.selected",
+    "files.prepared",
+    "response.streaming",
     "heartbeat"
   ],
   "node_states": [

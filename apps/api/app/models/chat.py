@@ -109,5 +109,8 @@ class AgentSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     input_list: Mapped[list] = mapped_column(
         JSONB, default=list, nullable=False, comment="provider transcript items"
     )
+    provider_session_id: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, comment="native session (previous_response_id / thread_id) of the agent"
+    )
     turns: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     chars: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

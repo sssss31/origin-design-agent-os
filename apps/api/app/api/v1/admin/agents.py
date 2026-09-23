@@ -5,9 +5,10 @@ import uuid
 from fastapi import APIRouter, status
 
 from app.api.v1.admin import AdminAuth
-from app.core.authz import DB
+from app.core.authz import DB, Config
 from app.core.deps import AdaptersDep
 from app.schemas.admin import (
+    AgentConnectionIn,
     AgentCreate,
     AgentCurlImportIn,
     AgentImportOut,
@@ -18,13 +19,14 @@ from app.schemas.admin import (
     AgentUpdate,
     AgentVersionInput,
     HandoffIn,
+    ProviderConnectionOut,
     PublishRequest,
     SkillBindingIn,
     SkillOrderIn,
     ToolBindingIn,
 )
 from app.services.admin_serializers import agent_out, agent_summary_out, provider_out
-from app.services.agents import AgentService, import_agent_from_curl
+from app.services.agents import AgentService, import_agent_from_curl, set_agent_connection
 
 router = APIRouter(prefix="/agents")
 
@@ -69,6 +71,52 @@ async def import_agent_curl(
         detected=_curl_preview(detected),
         published=published,
         connection=connection,
+    )
+
+
+@router.put("/{agent_id}/connection", response_model=AgentOut)
+async def set_connection(
+    agent_id: uuid.UUID, body: AgentConnectionIn, ctx: AdminAuth, session: DB, adapters: AdaptersDep
+) -> AgentOut:
+    """Workspace V0 §27: endpoint, API key (encrypted, write-only), connection config."""
+    return await agent_out(session, await set_agent_connection(session, ctx, agent_id, body, adapters))
+
+
+@router.post("/{agent_id}/test-connection", response_model=ProviderConnectionOut)
+async def test_connection(
+    agent_id: uuid.UUID, ctx: AdminAuth, session: DB, adapters: AdaptersDep, settings: Config
+) -> ProviderConnectionOut:
+    from datetime import UTC, datetime
+
+    from app.services.agent_gateway import test_agent_connection
+
+    svc = AgentService(session, ctx)
+    agent = await svc.get(agent_id)
+    if agent.connection_type == "origin":
+        return ProviderConnectionOut(
+            success=True,
+            provider="origin",
+            status="connected",
+            message="Origin-built agent (uses a model provider).",
+            latency_ms=0,
+            tested_at=datetime.now(UTC),
+        )
+    result = await test_agent_connection(
+        agent, adapters, settings, transport=getattr(adapters, "http_transport", None)
+    )
+    agent.connection_status = "ok" if result.ok else "error"
+    agent.connection_message = result.message
+    agent.connection_tested_at = datetime.now(UTC)
+    await session.flush()
+    await svc._audit("agent.connection_tested", agent.id, after={"ok": result.ok, "message": result.message})
+    return ProviderConnectionOut(
+        success=result.ok,
+        provider=agent.connection_type,
+        status="connected" if result.ok else "failed",
+        message=result.message,
+        latency_ms=result.latency_ms,
+        available_models=result.models,
+        tested_at=agent.connection_tested_at,
     )
 
 

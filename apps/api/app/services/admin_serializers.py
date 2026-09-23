@@ -13,6 +13,7 @@ from app.models.providers import AIProvider
 from app.models.skills import Skill, SkillVersion
 from app.models.tools import Tool, ToolVersion
 from app.schemas.admin import (
+    AgentConnectionOut,
     AgentOut,
     AgentSummaryOut,
     AgentVersionOut,
@@ -104,11 +105,31 @@ def skill_out(s: Skill) -> SkillOut:
     )
 
 
+def connection_out(a: Agent) -> AgentConnectionOut:
+    return AgentConnectionOut(
+        connection_type=a.connection_type,
+        api_endpoint=a.api_endpoint,
+        configured=a.connection_type == "origin"
+        or a.api_key_secret_ref_id is not None
+        or a.connection_type == "http",
+        api_key_preview=a.api_key_preview,
+        config={
+            k: v
+            for k, v in (a.connection_config or {}).items()
+            if "key" not in k.lower() and "secret" not in k.lower()
+        },
+        connection_status=a.connection_status,
+        connection_message=a.connection_message,
+        connection_tested_at=a.connection_tested_at,
+    )
+
+
 def agent_summary_out(a: Agent) -> AgentSummaryOut:
     active = next((v for v in a.versions if v.id == a.active_version_id), None)
     return from_orm(
         AgentSummaryOut,
         a,
+        connection=connection_out(a),
         active_version_number=active.version if active else None,
         has_draft=any(v.published_at is None for v in a.versions),
         model=active.model if active else next((v.model for v in a.versions if v.published_at is None), None),

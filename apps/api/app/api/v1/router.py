@@ -14,6 +14,7 @@ from app.api.v1 import (
     me,
     projects,
     runs,
+    work,
     workspaces,
 )
 from app.api.v1.admin import admin_router
@@ -26,6 +27,7 @@ api_router.include_router(dashboard.router)
 api_router.include_router(workspaces.router)
 api_router.include_router(projects.router)
 api_router.include_router(agents.router)
+api_router.include_router(work.router)
 api_router.include_router(conversations.router)
 api_router.include_router(assets.router)
 api_router.include_router(artifacts.router)

@@ -17,6 +17,9 @@
         "run.failed",
         "run.cancelled",
         "provider.retry",
+        "agent.selected",
+        "files.prepared",
+        "response.streaming",
         "heartbeat"
       ],
       "title": "EventType",
@@ -128,6 +131,19 @@
           "default": null,
           "title": "Defaults Used"
         },
+        "delta": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Delta"
+        },
         "duration_ms": {
           "anyOf": [
             {
@@ -165,6 +181,18 @@
           "default": null,
           "title": "Error Message"
         },
+        "files_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Files Count"
+        },
         "findings_count": {
           "anyOf": [
             {
@@ -176,6 +204,18 @@
           ],
           "default": null,
           "title": "Findings Count"
+        },
+        "history_messages": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "History Messages"
         },
         "input_summary": {
           "anyOf": [
@@ -324,6 +364,18 @@
           ],
           "default": null,
           "title": "Run Status"
+        },
+        "session_native": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Native"
         },
         "tool_display_name": {
           "anyOf": [

@@ -52,6 +52,26 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, AuditedMixin, Base):
     status: Mapped[str] = mapped_column(
         String(20), default="draft", nullable=False, comment="draft | active | disabled"
     )
+    # --- connection to an *existing* agent (Origin Agent Workspace V0 §3) --------------------
+    connection_type: Mapped[str] = mapped_column(
+        String(30),
+        default="origin",
+        nullable=False,
+        comment="origin (prompt built here) | openai_responses | http (existing agent API)",
+    )
+    api_endpoint: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    api_key_secret_ref_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("secret_refs.id", ondelete="SET NULL"), nullable=True
+    )
+    api_key_preview: Mapped[str | None] = mapped_column(
+        String(48), nullable=True, comment="masked, never the key"
+    )
+    connection_config: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False, comment="model / prompt_id / request+response mapping"
+    )
+    connection_status: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    connection_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    connection_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_manager: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, comment="routes /auto and plain messages"
     )

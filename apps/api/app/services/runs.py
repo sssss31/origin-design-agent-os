@@ -50,6 +50,30 @@ def plan_for(agent_slug: str, agent_name: str, *, is_manager: bool) -> list[dict
     ]
 
 
+def plan_for_existing(agent_slug: str, agent_name: str) -> list[dict]:
+    """Workspace V0 §15: request → command → agent → context → files → agent processing → saved."""
+    return [
+        {"id": "request", "name": "Request received", "kind": "parse", "index": 0},
+        {
+            "id": "select",
+            "name": f"{agent_name} selected",
+            "kind": "select",
+            "index": 1,
+            "agent_slug": agent_slug,
+        },
+        {"id": "context", "name": "Conversation context loaded", "kind": "context", "index": 2},
+        {"id": "files", "name": "Files prepared", "kind": "files", "index": 3},
+        {
+            "id": f"gateway:{agent_slug}",
+            "name": f"{agent_name} processing",
+            "kind": "gateway",
+            "index": 4,
+            "agent_slug": agent_slug,
+        },
+        {"id": "save", "name": "Output saved", "kind": "save", "index": SAVE_NODE_INDEX},
+    ]
+
+
 class RunService:
     def __init__(
         self, session: AsyncSession, ctx: AuthContext, adapters: Adapters, settings: Settings
@@ -180,7 +204,9 @@ class RunService:
             command=route.command,
             user_input=message.content,
             entry_agent_id=route.agent.id,
-            plan_json=plan_for(
+            plan_json=plan_for_existing(route.agent.slug, route.agent.name)
+            if route.agent.connection_type != "origin"
+            else plan_for(
                 route.agent.slug,
                 route.agent.name,
                 is_manager=route.agent.is_manager and not route.explicit or route.agent.is_manager,
@@ -209,8 +235,12 @@ class RunService:
                     name=node["name"],
                     kind=node["kind"],
                     status=NodeState.PENDING,
-                    agent_id=route.agent.id if node["kind"] in ("agent", "manager") else None,
-                    agent_version_id=route.version.id if node["kind"] in ("agent", "manager") else None,
+                    agent_id=route.agent.id
+                    if node["kind"] in ("agent", "manager", "gateway", "select")
+                    else None,
+                    agent_version_id=route.version.id
+                    if node["kind"] in ("agent", "manager", "gateway")
+                    else None,
                 )
             )
         message.run_id = run.id

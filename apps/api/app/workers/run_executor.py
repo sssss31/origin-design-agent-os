@@ -38,7 +38,9 @@ from app.ports.queue import Job
 from app.ports.runner import ProducedFile, RunInput, RunOutcome
 from app.ports.tools import ToolCall, ToolSpec
 from app.providers.base import ProviderError
+from app.providers.existing.base import AgentCallError
 from app.services.agent_factory import build_runtime_agent
+from app.services.agent_gateway import call_agent, load_context, prepare_files
 from app.services.artifacts import ArtifactService
 from app.services.context import build_context
 from app.services.conversations import ConversationService
@@ -270,6 +272,40 @@ class RunExecutor:
                 "body": run.input_json.get("body", ""),
                 "explicit": run.input_json.get("explicit", False),
             }
+        elif (
+            node.kind == "context"
+            and run.plan_json
+            and any(n.get("kind") == "gateway" for n in run.plan_json)
+        ):
+            entry = await session.get(Agent, run.entry_agent_id) if run.entry_agent_id else None
+            if entry is None:
+                raise NodeFailure("agent_missing", "the agent for this run no longer exists")
+            gw_ctx = await load_context(
+                session, conversation_id=run.conversation_id, agent=entry, exclude_message_id=run.message_id
+            )
+            node.output_json = {
+                "session_native": gw_ctx.session_native,
+                "history_messages": len(gw_ctx.history),
+            }
+            run.input_json = {
+                **run.input_json,
+                "gateway_context": {
+                    "session_native": gw_ctx.session_native,
+                    "history_messages": len(gw_ctx.history),
+                },
+            }
+            await recorder.add(
+                EventType.CONTEXT_LOADED,
+                SafeEventPayload(
+                    node_id=node.node_id,
+                    session_native=gw_ctx.session_native,
+                    history_messages=len(gw_ctx.history),
+                    context_sources=["agent_native_session"]
+                    if gw_ctx.session_native
+                    else ["recent_messages"],
+                ),
+                node_run_id=node.id,
+            )
         elif node.kind == "context":
             package = await build_context(
                 session,
@@ -312,6 +348,27 @@ class RunExecutor:
             )
             if paused:
                 return True
+        elif node.kind == "select":
+            agent = await session.get(Agent, node.agent_id)
+            if agent is None or agent.status != "active":
+                raise NodeFailure("agent_missing", "the agent for this step is not active")
+            node.output_json = {"agent": agent.slug, "connection_type": agent.connection_type}
+            await recorder.add(
+                EventType.AGENT_SELECTED,
+                SafeEventPayload(node_id=node.node_id, agent_slug=agent.slug, agent_name=agent.name),
+                node_run_id=node.id,
+            )
+        elif node.kind == "files":
+            asset_ids = list(run.input_json.get("selected_asset_ids", []))
+            artifact_ids = list(run.input_json.get("selected_artifact_ids", []))
+            node.output_json = {"assets": len(asset_ids), "artifacts": len(artifact_ids)}
+            await recorder.add(
+                EventType.FILES_PREPARED,
+                SafeEventPayload(node_id=node.node_id, files_count=len(asset_ids) + len(artifact_ids)),
+                node_run_id=node.id,
+            )
+        elif node.kind == "gateway":
+            await self._run_gateway_node(session, recorder, run, node, conversation=conversation)
         elif node.kind == "save":
             await self._save_result(session, run, node, conversation)
         else:
@@ -808,6 +865,170 @@ class RunExecutor:
             await self._expand_manager_plan(session, run, node, agent, version, outcome)
         return False
 
+    # ------------------------------------------------------------------ existing agents (workspace V0 §7, §30)
+    async def _run_gateway_node(
+        self,
+        session: AsyncSession,
+        recorder: EventRecorder,
+        run: WorkflowRun,
+        node: NodeRun,
+        *,
+        conversation: Conversation,
+    ) -> None:
+        agent = await session.get(Agent, node.agent_id)
+        if agent is None:
+            raise NodeFailure("agent_missing", "the agent for this step no longer exists")
+        gw_ctx = await load_context(
+            session, conversation_id=run.conversation_id, agent=agent, exclude_message_id=run.message_id
+        )
+        files = await prepare_files(
+            session,
+            self.adapters.storage,
+            asset_ids=[uuid.UUID(a) for a in run.input_json.get("selected_asset_ids", [])],
+            artifact_ids=[uuid.UUID(a) for a in run.input_json.get("selected_artifact_ids", [])],
+            settings=self.settings,
+        )
+        await recorder.add(
+            EventType.AGENT_STARTED,
+            SafeEventPayload(
+                node_id=node.node_id,
+                agent_slug=agent.slug,
+                agent_name=agent.name,
+                session_native=gw_ctx.session_native,
+                files_count=len(files),
+            ),
+            node_run_id=node.id,
+        )
+        await recorder.commit()
+
+        buffer: list[str] = []
+        pending = 0
+
+        async def on_delta(delta: str) -> None:
+            nonlocal pending
+            buffer.append(delta)
+            pending += len(delta)
+            if pending >= 240:  # stream in readable chunks; every chunk is a durable event (§17)
+                chunk = "".join(buffer[-64:])[-2000:]
+                await recorder.add(
+                    EventType.RESPONSE_STREAMING,
+                    SafeEventPayload(node_id=node.node_id, agent_slug=agent.slug, delta=chunk),
+                    node_run_id=node.id,
+                )
+                await recorder.commit()
+                buffer.clear()
+                pending = 0
+
+        message = run.input_json.get("body") or run.user_input
+        started = datetime.now(UTC)
+        try:
+            reply = await asyncio.wait_for(
+                call_agent(
+                    agent=agent,
+                    message=message,
+                    conversation_id=run.conversation_id,
+                    context=gw_ctx,
+                    files=files,
+                    adapters=self.adapters,
+                    settings=self.settings,
+                    on_delta=on_delta,
+                    transport=getattr(self.adapters, "http_transport", None),
+                ),
+                timeout=float((agent.connection_config or {}).get("timeout_seconds") or 300),
+            )
+        except AgentCallError as exc:
+            raise NodeFailure(exc.code, f"{exc.message} Retry.", retryable=exc.retryable) from exc
+        duration_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
+        if buffer:
+            await recorder.add(
+                EventType.RESPONSE_STREAMING,
+                SafeEventPayload(node_id=node.node_id, agent_slug=agent.slug, delta="".join(buffer)[-2000:]),
+                node_run_id=node.id,
+            )
+        # persist the agent's native session for the next turn (§10)
+        agent_session = await session.scalar(
+            select(AgentSession).where(
+                AgentSession.conversation_id == run.conversation_id, AgentSession.agent_id == agent.id
+            )
+        )
+        # always keep one row per (conversation, agent): it carries the turn counter shown in
+        # the composer and, when the provider returned one, the native session id
+        if agent_session is None:
+            agent_session = AgentSession(
+                conversation_id=run.conversation_id,
+                agent_id=agent.id,
+                provider_type=agent.connection_type,
+                model=str((agent.connection_config or {}).get("model") or agent.connection_type),
+                input_list=[],
+                turns=0,
+                chars=0,
+            )
+            session.add(agent_session)
+        if reply.session_id:
+            agent_session.provider_session_id = reply.session_id
+        agent_session.turns = (agent_session.turns or 0) + 1
+        agent_session.chars = (agent_session.chars or 0) + len(reply.text or "")
+        artifact_service = ArtifactService(session, None, self.adapters.storage)
+        produced: list[uuid.UUID] = []
+        for file in reply.files:
+            art, av = await artifact_service.persist_produced(
+                file,
+                workspace_id=run.workspace_id,
+                project_id=run.project_id,
+                conversation_id=run.conversation_id,
+                run_id=run.id,
+                node_run_id=node.id,
+                agent_version_id=node.agent_version_id,
+                organization_id=run.organization_id,
+                created_by=run.created_by,
+            )
+            produced.append(art.id)
+            await recorder.add(
+                EventType.ARTIFACT_CREATED,
+                SafeEventPayload(
+                    node_id=node.node_id,
+                    artifact_id=str(art.id),
+                    artifact_type=art.type,
+                    artifact_version=av.version_number,
+                    output_summary=art.name,
+                ),
+                node_run_id=node.id,
+            )
+        await record_usage(
+            session,
+            UsageContext(
+                organization_id=run.organization_id,
+                provider_type=agent.connection_type,
+                provider_id=None,
+                model=str((agent.connection_config or {}).get("model") or agent.connection_type),
+                run_id=run.id,
+                node_run_id=node.id,
+                agent_id=agent.id,
+                agent_version_id=node.agent_version_id,
+                user_id=run.created_by,
+                workspace_id=run.workspace_id,
+                project_id=run.project_id,
+                command=run.command,
+            ),
+            {k: v for k, v in reply.usage.items() if isinstance(v, int | float)},
+            duration_ms=duration_ms,
+        )
+        node.output_json = {
+            "output_text": reply.text,
+            "artifact_ids": [str(a) for a in produced],
+            "session_native": gw_ctx.session_native,
+            "warnings": list(reply.usage.get("warnings", [])),
+            "usage": {k: v for k, v in reply.usage.items() if isinstance(v, int | float | bool)},
+        }
+        run.result_json = {
+            **run.result_json,
+            "output_text": reply.text,
+            "last_agent": agent.slug,
+            "artifact_ids": list(
+                dict.fromkeys(run.result_json.get("artifact_ids", []) + [str(a) for a in produced])
+            ),
+        }
+
     # ------------------------------------------------------------------ manager delegation (spec §9 example, §13)
     async def _expand_manager_plan(
         self,
@@ -949,7 +1170,7 @@ class RunExecutor:
         agent_nodes = [
             n
             for n in sorted(run.nodes, key=lambda n: n.index)
-            if n.kind in ("agent", "manager") and n.status == NodeState.SUCCEEDED
+            if n.kind in ("agent", "manager", "gateway") and n.status == NodeState.SUCCEEDED
         ]
         parts: list[str] = []
         artifact_ids: list[uuid.UUID] = []
@@ -973,7 +1194,7 @@ class RunExecutor:
             agent_version_id=last_version_id,
             run_id=run.id,
             artifact_ids=list(dict.fromkeys(artifact_ids)),
-            metadata={"nodes": len(agent_nodes)},
+            metadata={"nodes": len(agent_nodes), **({"agent_name": agent.name} if agent else {})},
         )
         run.result_json = {
             **run.result_json,

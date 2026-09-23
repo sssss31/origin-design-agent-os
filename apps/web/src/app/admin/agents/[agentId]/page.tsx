@@ -10,10 +10,11 @@ import { JsonField, Select } from "@/components/ui/JsonField";
 import { Tabs } from "@/components/ui/Tabs";
 import Link from "next/link";
 import { agentsApi, providersApi, skillsApi, toolsApi } from "@/lib/api/admin";
-import type { AgentOut, AgentSummaryOut, AgentTestOut, AgentVersionInput, AgentVersionOut, ProviderOut, SkillOut, ToolOut } from "@/types/admin";
+import type { AgentOut, AgentSummaryOut, AgentTestOut, AgentVersionInput, AgentVersionOut, ProviderConnectionOut, ProviderOut, SkillOut, ToolOut } from "@/types/admin";
 
-type Tab = "general" | "instructions" | "skills" | "tools" | "model" | "connections" | "schemas" | "versions" | "test";
+type Tab = "connection" | "general" | "instructions" | "skills" | "tools" | "model" | "connections" | "schemas" | "versions" | "test";
 const TABS: { id: Tab; label: string }[] = [
+  { id: "connection", label: "Connection" },
   { id: "general", label: "General" },
   { id: "instructions", label: "Instructions" },
   { id: "skills", label: "Skills" },
@@ -29,7 +30,7 @@ export default function AgentEditorPage() {
   const { agentId } = useParams<{ agentId: string }>();
   const run = useAsyncAction();
   const [agent, setAgent] = useState<AgentOut | null>(null);
-  const [tab, setTab] = useState<Tab>("general");
+  const [tab, setTab] = useState<Tab>("connection");
   const [providers, setProviders] = useState<ProviderOut[]>([]);
   const [skills, setSkills] = useState<SkillOut[]>([]);
   const [tools, setTools] = useState<ToolOut[]>([]);
@@ -89,6 +90,7 @@ export default function AgentEditorPage() {
       <div className="mt-4">
         <ErrorText>{error}</ErrorText>
         {notice ? <p className="mb-2 text-xs text-success">{notice}</p> : null}
+        {tab === "connection" ? <ConnectionTab key={`${agent.id}:${agent.connection?.connection_tested_at ?? ""}:${agent.connection?.api_key_preview ?? ""}:${agent.status}`} agent={agent} mutate={mutate} onSaveGeneral={(b) => mutate(() => agentsApi.update(agent.id, b), "Saved")} /> : null}
         {tab === "general" ? <GeneralTab agent={agent} onSave={(b) => mutate(() => agentsApi.update(agent.id, b), "Saved")} /> : null}
         {tab === "instructions" ? <InstructionsTab version={working} onSave={(b) => mutate(() => agentsApi.saveDraft(agent.id, b), "Draft saved")} /> : null}
         {tab === "skills" ? <SkillsTab agent={agent} version={working} skills={skills} mutate={mutate} /> : null}
@@ -100,6 +102,95 @@ export default function AgentEditorPage() {
         {tab === "test" ? <TestTab agent={agent} /> : null}
       </div>
     </AdminShell>
+  );
+}
+
+const CONNECTION_TYPES = [
+  { value: "openai_responses", label: "OpenAI Responses API (GPT agent / prompt)" },
+  { value: "http", label: "HTTP JSON endpoint" },
+  { value: "origin", label: "Origin-hosted (uses an AI Provider below)" },
+];
+
+/** Workspace V0 §27: name, command, description, endpoint, masked key, status, Test Connection, Save. */
+function ConnectionTab({ agent, mutate, onSaveGeneral }: { agent: AgentOut; mutate: (fn: () => Promise<AgentOut>, msg: string) => void; onSaveGeneral: (b: Partial<Pick<AgentOut, "name" | "command" | "description">>) => void }) {
+  const conn = agent.connection;
+  const [name, setName] = useState(agent.name);
+  const [command, setCommand] = useState(agent.command);
+  const [description, setDescription] = useState(agent.description);
+  const [type, setType] = useState<string>(conn?.connection_type ?? "openai_responses");
+  const [endpoint, setEndpoint] = useState(conn?.api_endpoint ?? "");
+  const [apiKey, setApiKey] = useState("");
+  const [config, setConfig] = useState<Record<string, unknown>>(conn?.config ?? {});
+  const [status, setStatus] = useState<"active" | "draft" | "disabled">(agent.status);
+  const [test, setTest] = useState<ProviderConnectionOut | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const looksLikeCurl = /^\s*curl\s/i.test(apiKey);
+  const save = () => {
+    if (name !== agent.name || command !== agent.command || description !== agent.description) onSaveGeneral({ name, command, description });
+    mutate(async () => {
+      const updated = await agentsApi.setConnection(agent.id, { connection_type: type, api_endpoint: endpoint || null, api_key: apiKey || undefined, config });
+      if (status !== agent.status) return agentsApi.update(agent.id, { status });
+      return updated;
+    }, "Connection saved");
+    setApiKey("");
+  };
+  const runTest = async () => {
+    setTesting(true);
+    setError(null);
+    try {
+      setTest(await agentsApi.testConnection(agent.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Test failed");
+    } finally {
+      setTesting(false);
+    }
+  };
+  return (
+    <Card>
+      <CardTitle>Agent connection</CardTitle>
+      <p className="mb-3 text-xs text-muted">Origin is only the workspace. This agent keeps its own instructions on the provider side; the key is stored encrypted on the server and never sent back to the browser.</p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
+        <Field label="Command"><Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="/resize" /></Field>
+        <div className="md:col-span-2"><Field label="Description"><Input value={description} onChange={(e) => setDescription(e.target.value)} /></Field></div>
+        <Select label="Connection type" value={type} onChange={setType} options={CONNECTION_TYPES} />
+        <Select label="Status" value={status} onChange={(v) => setStatus(v as typeof status)} options={[{ value: "active", label: "Active" }, { value: "draft", label: "Draft" }, { value: "disabled", label: "Disabled" }]} />
+        {type !== "origin" ? (
+          <>
+            <div className="md:col-span-2">
+              <Field label="API endpoint" hint={type === "openai_responses" ? "Base URL, e.g. https://api.openai.com/v1 (the adapter calls POST /responses)" : "Full URL that receives POST {message, session_id, history, files}"}>
+                <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder={type === "openai_responses" ? "https://api.openai.com/v1" : "https://agent.example.com/chat"} />
+              </Field>
+            </div>
+            <div className="md:col-span-2">
+              <Field label="API key" hint={conn?.configured ? `Configured · ${conn.api_key_preview ?? "••••••••"} — leave empty to keep it` : "Not configured"}>
+                <Input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={conn?.configured ? "Enter a new key to rotate" : "sk-…"} />
+              </Field>
+              {looksLikeCurl ? <p className="mt-1 text-xs text-warning">That looks like a cURL command — only the Bearer token will be stored; the URL and body are not used here.</p> : null}
+            </div>
+            <div className="md:col-span-2">
+              <JsonField label={type === "openai_responses" ? "Options (model, prompt_id, prompt_version, store, timeout_seconds)" : "Options (api_key_header, body_template, response_text_path, session_id_path, files_path, timeout_seconds)"} value={config} onChange={setConfig} rows={4} />
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-muted md:col-span-2">Origin-hosted agents run through the AI Provider chosen in the “AI Provider” tab with the instructions from the “Instructions” tab.</p>
+        )}
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button onClick={save}>Save</Button>
+        {type !== "origin" ? <Button variant="secondary" onClick={() => void runTest()} disabled={testing}>{testing ? "Testing…" : "Test Connection"}</Button> : null}
+        {conn && conn.connection_type !== "origin" ? (
+          <Badge tone={conn.connection_status === "ok" ? "success" : conn.connection_status === "error" ? "danger" : "neutral"}>
+            {conn.connection_status === "ok" ? "Connected" : conn.connection_status === "error" ? "Connection failed" : "Untested"}
+            {conn.connection_tested_at ? ` · ${new Date(conn.connection_tested_at).toLocaleString()}` : ""}
+          </Badge>
+        ) : null}
+      </div>
+      {conn?.connection_message && conn.connection_status === "error" ? <p className="mt-2 text-xs text-danger">{conn.connection_message}</p> : null}
+      {test ? <p className={`mt-2 text-xs ${test.success ? "text-success" : "text-danger"}`}>{test.success ? "🟢" : "🔴"} {test.message} ({test.latency_ms} ms)</p> : null}
+      <ErrorText>{error}</ErrorText>
+    </Card>
   );
 }
 

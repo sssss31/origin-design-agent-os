@@ -236,6 +236,17 @@ export interface AgentVersionInput {
   change_note?: string;
 }
 
+export interface AgentConnectionOut {
+  connection_type: "origin" | "openai_responses" | "http";
+  api_endpoint: string | null;
+  configured: boolean;
+  api_key_preview: string | null;
+  config: Record<string, unknown>;
+  connection_status: "unknown" | "ok" | "error";
+  connection_message: string | null;
+  connection_tested_at: string | null;
+}
+
 export interface AgentSummaryOut {
   id: string;
   organization_id: string;
@@ -251,6 +262,7 @@ export interface AgentSummaryOut {
   active_version_number: number | null;
   has_draft: boolean;
   model: string | null;
+  connection: AgentConnectionOut | null;
 }
 
 export interface AgentOut extends AgentSummaryOut {

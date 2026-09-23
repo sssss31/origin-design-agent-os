@@ -29,6 +29,9 @@ class EventType(StrEnum):
     RUN_FAILED = "run.failed"
     RUN_CANCELLED = "run.cancelled"
     PROVIDER_RETRY = "provider.retry"
+    AGENT_SELECTED = "agent.selected"
+    FILES_PREPARED = "files.prepared"
+    RESPONSE_STREAMING = "response.streaming"
     HEARTBEAT = "heartbeat"
 
 
@@ -63,6 +66,10 @@ class SafeEventPayload(BaseModel):
     findings_count: int | None = None
     qc_passed: bool | None = None
     retry_attempt: int | None = None
+    delta: str | None = Field(default=None, max_length=4000)
+    session_native: bool | None = None
+    files_count: int | None = None
+    history_messages: int | None = None
 
 
 class ExecutionEvent(BaseModel):

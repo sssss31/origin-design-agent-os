@@ -26,6 +26,7 @@ from app.models.workspace import Project, Workspace
 from app.ports.runner import RunInput
 from app.providers.base import ProviderError
 from app.schemas.admin import (
+    AgentConnectionIn,
     AgentCreate,
     AgentCurlImportIn,
     AgentTestOut,
@@ -811,6 +812,71 @@ class AgentService:
             tools=[t.slug for t in resolved.runtime.tools] if resolved else [],
             duration_ms=duration,
         )
+
+
+async def set_agent_connection(
+    session: AsyncSession, ctx: AuthContext, agent_id: uuid.UUID, data: AgentConnectionIn, adapters: Adapters
+) -> Agent:
+    """Workspace V0 §3: endpoint + encrypted key per agent; makes the agent runnable (published, active)."""
+    from app.ports.secrets import key_preview
+
+    svc = AgentService(session, ctx)
+    agent = await svc.get(agent_id)
+    before = {
+        "connection_type": agent.connection_type,
+        "api_endpoint": agent.api_endpoint,
+        "api_key_preview": agent.api_key_preview,
+    }
+    agent.connection_type = data.connection_type
+    agent.api_endpoint = data.api_endpoint
+    agent.connection_config = data.config
+    if data.clear_api_key and agent.api_key_secret_ref_id:
+        await adapters.secrets.delete(str(agent.api_key_secret_ref_id))
+        agent.api_key_secret_ref_id = None
+        agent.api_key_preview = None
+    if data.api_key:
+        value = ProviderService.normalize_key(data.api_key)
+        if agent.api_key_secret_ref_id:
+            handle = await adapters.secrets.rotate(str(agent.api_key_secret_ref_id), value)
+        else:
+            handle = await adapters.secrets.store(f"agent:{agent.slug}", value)
+            agent.api_key_secret_ref_id = uuid.UUID(handle.ref)
+        agent.api_key_preview = key_preview(value)
+    agent.connection_status = "unknown"
+    agent.connection_message = None
+    agent.updated_by = ctx.user_id
+    await session.flush()  # before any reload (get() uses populate_existing) drops these changes
+    if data.connection_type != "origin":
+        # existing agents keep their own instructions: publish a minimal version so /command routes to them
+        version = svc.active_of(agent) or svc.draft_of(agent)
+        if version is None or not version.instructions.strip():
+            await svc.save_draft(
+                agent.id,
+                AgentVersionInput(
+                    instructions=f"Managed by the existing {agent.name} ({data.connection_type}); "
+                    "Origin relays messages, context and files without adding a system prompt.",
+                    change_note="existing agent connection",
+                ),
+            )
+        agent = await svc.get(agent.id)
+        if svc.draft_of(agent) is not None:
+            draft = svc.draft_of(agent)
+            assert draft is not None
+            draft.published_at = utcnow()
+            agent.active_version_id = draft.id
+        agent.status = "active"
+    await session.flush()
+    await svc._audit(
+        "agent.connection_set",
+        agent.id,
+        before=before,
+        after={
+            "connection_type": agent.connection_type,
+            "api_endpoint": agent.api_endpoint,
+            "api_key_preview": agent.api_key_preview,
+        },
+    )
+    return await svc.get(agent.id)
 
 
 async def import_agent_from_curl(

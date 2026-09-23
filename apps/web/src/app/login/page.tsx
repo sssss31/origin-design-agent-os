@@ -17,7 +17,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (session.status === "authenticated") router.replace("/app");
+    if (session.status === "authenticated") router.replace("/chat");
   }, [session.status, router]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -26,7 +26,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await session.login(email, password);
-      router.replace("/app");
+      router.replace("/chat");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not sign in");
     } finally {

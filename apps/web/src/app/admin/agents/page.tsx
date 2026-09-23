@@ -47,7 +47,14 @@ export default function AgentsPage() {
             </select>
           </div>
           {agents === null ? <p className="text-sm text-muted">Loading…</p> : null}
-          {agents?.length === 0 ? <EmptyState title="No agents yet" body="Create one on the right. The eight design agents are seeded in Phase 6; you can also add them here." /> : null}
+          {agents?.length === 0 ? (
+            <Card>
+              <EmptyState title="No agents yet" body="Create the eight workspace commands (/master, /resize, /editable, /qc, /copy, /asset, /export, /agent8) and then add each agent's endpoint and key." />
+              <div className="mt-3 flex justify-center">
+                <Button variant="secondary" onClick={() => void run(() => agentsApi.seedRegistry("openai_responses").then(() => agentsApi.list().then(setAgents)), setError)}>Create the 8 agent entries</Button>
+              </div>
+            </Card>
+          ) : null}
           {visible.map((a) => (
             <Link key={a.id} href={`/admin/agents/${a.id}`} className="block">
               <Card className="hover:border-accent">
@@ -63,6 +70,11 @@ export default function AgentsPage() {
                     {a.active_version_number ? <span>v{a.active_version_number}</span> : null}
                     {a.has_draft ? <Badge tone="warning">draft</Badge> : null}
                     {a.is_manager ? <Badge tone="accent">manager</Badge> : null}
+                    {a.connection && a.connection.connection_type !== "origin" ? (
+                      <Badge tone={a.connection.connection_status === "ok" ? "success" : a.connection.connection_status === "error" ? "danger" : "neutral"}>
+                        {a.connection.connection_status === "ok" ? "connected" : a.connection.connection_status === "error" ? "connection failed" : a.connection.configured ? "key configured" : "no key"}
+                      </Badge>
+                    ) : null}
                     <Badge tone={tone[a.status]}>{a.status}</Badge>
                   </div>
                 </div>

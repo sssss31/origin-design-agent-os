@@ -13,7 +13,11 @@ export const EVENT_TYPES = [
   "run.started",
   "node.started",
   "context.loaded",
+  "agent.selected",
+  "files.prepared",
   "agent.started",
+  "response.streaming",
+  "provider.retry",
   "tool.started",
   "tool.completed",
   "artifact.created",
@@ -54,6 +58,11 @@ export interface SafeEventPayload {
   duration_ms?: number | null;
   findings_count?: number | null;
   qc_passed?: boolean | null;
+  delta?: string | null;
+  session_native?: boolean | null;
+  files_count?: number | null;
+  history_messages?: number | null;
+  retry_attempt?: number | null;
 }
 
 export interface ExecutionEvent {
