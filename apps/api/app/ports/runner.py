@@ -63,7 +63,7 @@ class RunOutcome:
     resume_state: dict[str, Any] | None = None
     files: list[ProducedFile] = field(default_factory=list)
     defaults_used: list[str] = field(default_factory=list)
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
     steps: int = 0
 
 

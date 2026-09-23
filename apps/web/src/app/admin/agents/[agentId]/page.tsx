@@ -422,31 +422,59 @@ function VersionsTab({ agent, mutate }: { agent: AgentOut; mutate: (fn: () => Pr
 
 function TestTab({ agent }: { agent: AgentOut }) {
   const run = useAsyncAction();
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState("Create a premium healthcare poster");
   const [useDraft, setUseDraft] = useState(true);
   const [result, setResult] = useState<AgentTestOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const icon = { done: "✓", running: "●", failed: "✕", skipped: "–" } as const;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
       <Card className="space-y-3">
-        <CardTitle>Sandbox test</CardTitle>
-        <Field label="Sample request"><Textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="/resize the approved poster to 4:5" /></Field>
+        <CardTitle>Test Agent</CardTitle>
+        <Field label="Request"><Textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Create a premium healthcare poster" /></Field>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={useDraft} onChange={(e) => setUseDraft(e.target.checked)} /> Use draft version when present</label>
         <ErrorText>{error}</ErrorText>
-        <Button disabled={busy || !input.trim()} onClick={() => { setBusy(true); void run(() => agentsApi.test(agent.id, { input, use_draft: useDraft }), setError).then((r) => { if (r) setResult(r); setBusy(false); }); }}>
+        <Button disabled={busy || !input.trim()} onClick={() => { setBusy(true); setResult(null); void run(() => agentsApi.test(agent.id, { input, use_draft: useDraft }), setError).then((r) => { if (r) setResult(r); setBusy(false); }); }}>
           {busy ? "Running…" : "Run test"}
         </Button>
+        <div className="rounded-md border border-border p-3">
+          <p className="mb-2 text-xs font-medium">Execution</p>
+          {!result && !busy ? <p className="text-xs text-muted">Provider → Agent → Skills → Context → Connection → Execution → Response → Usage. Tools are recorded, not executed.</p> : null}
+          {busy ? <p className="text-xs text-muted">● Agent executing…</p> : null}
+          {result ? (
+            <ol className="space-y-1 text-xs">
+              {result.steps.map((s, i) => (
+                <li key={i} className={s.status === "failed" ? "text-danger" : s.status === "done" ? "text-success" : "text-muted"}>
+                  {icon[s.status]} {s.label}{s.detail ? <span className="text-muted"> — {s.detail}</span> : null}
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </div>
       </Card>
       <Card>
-        <CardTitle>Safe trace</CardTitle>
-        {!result ? <p className="text-xs text-muted">Tools are not executed in the sandbox; calls are recorded. No hidden reasoning is shown.</p> : (
+        <CardTitle>Result</CardTitle>
+        {!result ? <p className="text-xs text-muted">Model, latency, tokens, estimated cost, tool calls and the response appear here. No hidden reasoning is shown.</p> : result.error_code ? (
           <div className="space-y-2 text-xs">
-            <p><b>v{result.version}</b> · {result.provider_type}/{result.model} via {result.runner} · {result.steps} steps · {result.duration_ms} ms</p>
+            <p className="text-danger"><b>{result.error_code}</b>: {result.error_message}</p>
+            {result.error_code === "provider_secret_unavailable" ? <Link href="/admin/integrations" className="text-accent">Open API Integrations →</Link> : null}
+          </div>
+        ) : (
+          <div className="space-y-2 text-xs">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
+              <dt className="text-muted">Model</dt><dd className="font-mono">{result.model}</dd>
+              <dt className="text-muted">Latency</dt><dd>{result.duration_ms} ms{result.usage.attempts > 1 ? ` (${result.usage.attempts} attempts)` : ""}</dd>
+              <dt className="text-muted">Input tokens</dt><dd>{result.usage.input_tokens}{result.usage.cached_input_tokens ? ` (${result.usage.cached_input_tokens} cached)` : ""}</dd>
+              <dt className="text-muted">Output tokens</dt><dd>{result.usage.output_tokens}{result.usage.reasoning_tokens ? ` (${result.usage.reasoning_tokens} reasoning)` : ""}</dd>
+              <dt className="text-muted">Estimated cost</dt><dd>{result.usage.priced ? `$${result.usage.estimated_cost_usd.toFixed(5)}` : <Link href="/admin/usage" className="text-accent">no price configured</Link>}</dd>
+              <dt className="text-muted">Tool calls</dt><dd>{result.usage.tool_calls}</dd>
+            </dl>
             <p><b>Instruction sections:</b> {result.instruction_sections.join(" → ")} ({result.instruction_chars} chars)</p>
             <p><b>Tools available:</b> {result.tools.join(", ") || "none"}</p>
             {result.requires_clarification ? <p className="text-warning"><b>Clarification requested:</b> {result.question}</p> : null}
-            <pre className="whitespace-pre-wrap rounded-md bg-surface-2 p-2">{result.output_text || "(no text output)"}</pre>
+            <p className="font-medium">Response</p>
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-surface-2 p-2">{result.output_text || "(no text output)"}</pre>
             {result.defaults_used.length ? <p><b>Defaults used:</b> {result.defaults_used.join("; ")}</p> : null}
           </div>
         )}

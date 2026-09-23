@@ -71,6 +71,7 @@ async def overview(
                 func.count(ApiUsage.id),
                 func.coalesce(func.sum(ApiUsage.input_tokens + ApiUsage.output_tokens), 0),
                 func.coalesce(func.avg(ApiUsage.duration_ms), 0),
+                func.coalesce(func.sum(ApiUsage.estimated_cost_usd), 0),
             )
             .where(ApiUsage.organization_id == org, ApiUsage.created_at >= month_start)
             .group_by(ApiUsage.provider_type)
@@ -98,6 +99,7 @@ async def overview(
                 requests_month=int(u[1]) if u else 0,
                 tokens_month=int(u[2]) if u else 0,
                 avg_latency_ms=int(u[3]) if u and u[1] else None,
+                estimated_cost_month_usd=round(float(u[4]), 4) if u else 0.0,
             )
         )
     types = [

@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.adapters.registry import Adapters
 from app.core.authz import AuthContext
-from app.core.errors import Conflict, NotFound, ServiceUnavailable, ValidationFailed
+from app.core.errors import Conflict, NotFound, RateLimited, ValidationFailed
 from app.db.base import utcnow
 from app.domain.slugs import slugify
 from app.models.agents import Agent, AgentHandoff, AgentSkillBinding, AgentToolBinding, AgentVersion
@@ -33,12 +33,15 @@ from app.schemas.admin import (
     HandoffIn,
     PublishRequest,
     SkillBindingIn,
+    TestStep,
+    TestUsage,
     ToolBindingIn,
 )
 from app.services import audit
 from app.services.agent_factory import build_runtime_agent
 from app.services.composer import ComposedSkill
 from app.services.providers import provider_adapters
+from app.services.usage import UsageContext, enforce_provider_limits, record_usage
 
 VERSION_FIELDS = (
     "provider_id",
@@ -591,6 +594,15 @@ class AgentService:
         *,
         extra_skills: Sequence[ComposedSkill] | None = None,
     ) -> AgentTestOut:
+        """Spec §16 test console: every stage is reported as a step; failures return a sanitized result."""
+        steps: list[TestStep] = []
+
+        def done(label: str, detail: str | None = None) -> None:
+            steps.append(TestStep(label=label, status="done", detail=detail))
+
+        def failed(label: str, detail: str) -> None:
+            steps.append(TestStep(label=label, status="failed", detail=detail))
+
         agent = await self.get(agent_id)
         version = (
             (self.draft_of(agent) if data.use_draft else None)
@@ -599,6 +611,7 @@ class AgentService:
         )
         if version is None:
             raise ValidationFailed("Agent has no version to test", code="no_version")
+        done("Agent loaded", f"{agent.name} v{version.version}")
         organization = await self.session.get(Organization, self.org_id)
         assert organization is not None
         workspace: Workspace | None = None
@@ -609,54 +622,117 @@ class AgentService:
                 workspace = await self.session.get(Workspace, project.workspace_id)
                 if workspace is None or workspace.organization_id != self.org_id:
                     project, workspace = None, None
-        resolved = await build_runtime_agent(
-            self.session,
-            agent,
-            version,
-            organization=organization,
-            workspace=workspace,
-            project=project,
-            extra_skills=extra_skills,
+        try:
+            resolved = await build_runtime_agent(
+                self.session,
+                agent,
+                version,
+                organization=organization,
+                workspace=workspace,
+                project=project,
+                extra_skills=extra_skills,
+            )
+        except ValidationFailed as exc:
+            failed("Provider loaded", exc.message)
+            return self._test_failed(steps, agent, version, exc.code, exc.message)
+        done("Provider loaded", f"{resolved.provider.name} · {resolved.runtime.model}")
+        done(
+            "Skills loaded",
+            ", ".join(s for s in resolved.composition.sections if s.startswith("skill:")) or "none",
+        )
+        done(
+            "Workspace context loaded",
+            ", ".join(
+                s
+                for s in resolved.composition.sections
+                if s not in ("platform_rules", "agent_instructions") and not s.startswith("skill:")
+            )
+            or "no project selected",
         )
         provider_adapter = adapters.providers.get(resolved.provider.type)
         if provider_adapter is None:
-            raise ServiceUnavailable(
-                f"No runtime registered for provider type '{resolved.provider.type}' yet",
-                code="runner_unavailable",
+            failed("Provider connected", f"no runtime for {resolved.provider.type}")
+            return self._test_failed(
+                steps, agent, version, "runner_unavailable", "No runtime for this provider type."
             )
         runner = provider_adapter.runner
         credentials: dict[str, str] = {}
         if resolved.provider.secret_ref_id:
             try:
                 credentials["api_key"] = await adapters.secrets.reveal(str(resolved.provider.secret_ref_id))
-            except LookupError as exc:
-                raise ServiceUnavailable(
-                    "The provider credential cannot be read", code="provider_secret_unavailable"
-                ) from exc
+            except LookupError:
+                failed("Provider connected", "the stored credential cannot be read")
+                return self._test_failed(
+                    steps, agent, version, "provider_secret_unavailable", "Credential unreadable."
+                )
         if resolved.provider.base_url:
             credentials["base_url"] = resolved.provider.base_url
         if resolved.provider.type != "echo" and not credentials.get("api_key"):
-            raise ServiceUnavailable(
-                "Provider has no API key configured. Add one under Admin → API Integrations.",
-                code="provider_secret_unavailable",
+            failed("Provider connected", "no API key configured — add one under Admin → API Integrations")
+            return self._test_failed(
+                steps, agent, version, "provider_secret_unavailable", "Provider has no API key."
             )
+        try:
+            await enforce_provider_limits(self.session, resolved.provider)
+        except RateLimited as exc:
+            failed("Provider connected", exc.message)
+            return self._test_failed(steps, agent, version, exc.code, exc.message)
         resolved.runtime.provider_credentials = credentials
+        done("Provider connected", f"{resolved.provider.type} ready")
 
         async def invoke_tool(slug: str, args: dict[str, Any]) -> dict[str, Any]:
             # Sandbox test never executes real tools; it records the call.
             return {"ok": True, "sandbox": True, "tool": slug, "args": args}
 
         async def emit(event_type: str, payload: dict[str, Any]) -> None:
-            return None
+            if event_type == "provider.retry":
+                steps.append(
+                    TestStep(
+                        label="Agent executing", status="running", detail=f"retry {payload.get('attempt')}"
+                    )
+                )
 
+        usage_ctx = UsageContext(
+            organization_id=self.org_id,
+            provider_type=resolved.provider.type,
+            provider_id=resolved.provider.id,
+            model=resolved.runtime.model,
+            agent_id=agent.id,
+            agent_version_id=version.id,
+            user_id=self.ctx.user_id,
+            command=agent.command,
+        )
         started = time.perf_counter()
         try:
             outcome = await provider_adapter.execute(
                 resolved.runtime, RunInput(user_input=data.input), invoke_tool=invoke_tool, emit=emit
             )
         except ProviderError as exc:
-            raise ServiceUnavailable(exc.message, code=exc.code) from exc
+            duration = int((time.perf_counter() - started) * 1000)
+            await record_usage(
+                self.session, usage_ctx, {}, duration_ms=duration, status="error", error_code=exc.code
+            )
+            failed("Agent executing", exc.message)
+            return self._test_failed(
+                steps, agent, version, exc.code, exc.message, resolved=resolved, duration=duration
+            )
         duration = int((time.perf_counter() - started) * 1000)
+        done("Agent executing", f"{outcome.steps} steps · {duration} ms")
+        done(
+            "Response received",
+            "clarification requested"
+            if outcome.requires_clarification
+            else f"{len(outcome.output_text)} chars",
+        )
+        _, estimate = await record_usage(
+            self.session, usage_ctx, outcome.usage, duration_ms=duration, status="test"
+        )
+        done(
+            "Usage recorded",
+            f"${estimate.estimated_cost_usd:.4f}"
+            if estimate.priced
+            else "no price configured for this model",
+        )
         await self._audit(
             "agent.tested",
             agent.id,
@@ -665,9 +741,21 @@ class AgentService:
                 "runner": runner.name,
                 "steps": outcome.steps,
                 "duration_ms": duration,
+                "estimated_cost_usd": estimate.estimated_cost_usd,
             },
         )
         return AgentTestOut(
+            steps=steps,
+            usage=TestUsage(
+                input_tokens=estimate.input_tokens,
+                cached_input_tokens=estimate.cached_input_tokens,
+                output_tokens=estimate.output_tokens,
+                reasoning_tokens=estimate.reasoning_tokens,
+                tool_calls=estimate.tool_calls,
+                estimated_cost_usd=estimate.estimated_cost_usd,
+                priced=estimate.priced,
+                attempts=int(outcome.usage.get("attempts", 1) or 1),
+            ),
             agent_slug=agent.slug,
             version=version.version,
             provider_type=resolved.provider.type,
@@ -678,10 +766,42 @@ class AgentService:
             requires_clarification=outcome.requires_clarification,
             question=outcome.question,
             defaults_used=outcome.defaults_used,
-            steps=outcome.steps,
+            steps_count=outcome.steps,
             instruction_sections=resolved.composition.sections,
             instruction_chars=resolved.composition.chars,
             tools=[t.slug for t in resolved.runtime.tools],
+            duration_ms=duration,
+        )
+
+    @staticmethod
+    def _test_failed(
+        steps: Sequence[TestStep],
+        agent: Agent,
+        version: AgentVersion,
+        code: str,
+        message: str,
+        *,
+        resolved: Any = None,
+        duration: int = 0,
+    ) -> AgentTestOut:
+        return AgentTestOut(
+            steps=list(steps),
+            error_code=code,
+            error_message=message,
+            agent_slug=agent.slug,
+            version=version.version,
+            provider_type=resolved.provider.type if resolved else "",
+            model=resolved.runtime.model if resolved else (version.model or ""),
+            runner="",
+            output_text="",
+            structured_output=None,
+            requires_clarification=False,
+            question=None,
+            defaults_used=[],
+            steps_count=0,
+            instruction_sections=resolved.composition.sections if resolved else [],
+            instruction_chars=resolved.composition.chars if resolved else 0,
+            tools=[t.slug for t in resolved.runtime.tools] if resolved else [],
             duration_ms=duration,
         )
 

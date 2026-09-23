@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.adapters.registry import Adapters
 from app.adapters.tools_http import HttpApiExecutor
 from app.core.config import Settings
+from app.core.errors import RateLimited
 from app.core.logging import get_logger, redact
 from app.domain.events import EventType, SafeEventPayload
 from app.domain.qc import parse_report
@@ -30,7 +31,7 @@ from app.models.chat import Conversation
 from app.models.files import Artifact, ArtifactVersion
 from app.models.identity import Organization, OrganizationMember
 from app.models.tools import Tool, ToolPermission
-from app.models.workflows import ApiUsage, ErrorEvent, NodeRun, WorkflowRun
+from app.models.workflows import ErrorEvent, NodeRun, WorkflowRun
 from app.models.workspace import Project, Workspace
 from app.ports.queue import Job
 from app.ports.runner import ProducedFile, RunInput, RunOutcome
@@ -42,6 +43,7 @@ from app.services.context import build_context
 from app.services.conversations import ConversationService
 from app.services.events import EventRecorder
 from app.services.runs import SAVE_NODE_INDEX
+from app.services.usage import UsageContext, enforce_provider_limits, record_usage
 from app.tools import registry as tool_registry
 from app.tools.context import ToolContext
 
@@ -411,7 +413,26 @@ class RunExecutor:
                 "provider_secret_unavailable",
                 "Agent temporarily unavailable. Provider connection failed (no API key configured).",
             )
+        try:
+            await enforce_provider_limits(session, resolved.provider)
+        except RateLimited as exc:
+            raise NodeFailure(exc.code, exc.message, retryable=False) from exc
         runtime.provider_credentials = credentials
+        usage_ctx = UsageContext(
+            organization_id=run.organization_id,
+            provider_type=resolved.provider.type,
+            provider_id=resolved.provider.id,
+            model=runtime.model,
+            run_id=run.id,
+            node_run_id=node.id,
+            agent_id=agent.id,
+            agent_version_id=version.id,
+            user_id=run.created_by,
+            workspace_id=run.workspace_id,
+            project_id=run.project_id,
+            workflow_id=run.workflow_version_id,
+            command=run.command,
+        )
         await recorder.add(
             EventType.AGENT_STARTED,
             SafeEventPayload(
@@ -612,21 +633,32 @@ class RunExecutor:
             )
         except ProviderError as exc:
             # technical detail was logged by the adapter; the user sees a sanitized message
+            await record_usage(
+                session,
+                usage_ctx,
+                {"tool_calls": sum(calls.values())},
+                duration_ms=int((datetime.now(UTC) - started).total_seconds() * 1000),
+                status="error",
+                error_code=exc.code,
+            )
             raise NodeFailure(exc.code, exc.message, retryable=exc.retryable) from exc
         duration_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
-        session.add(
-            ApiUsage(
-                organization_id=run.organization_id,
-                run_id=run.id,
-                node_run_id=node.id,
-                provider_type=resolved.provider.type,
-                model=runtime.model,
-                input_tokens=int(outcome.usage.get("input_tokens", 0)),
-                output_tokens=int(outcome.usage.get("output_tokens", 0)),
-                tool_calls=sum(calls.values()),
-                duration_ms=duration_ms,
-            )
+        _, estimate = await record_usage(
+            session,
+            usage_ctx,
+            {
+                **outcome.usage,
+                "tool_calls": sum(calls.values()),
+                "image_generations": sum(n for slug, n in calls.items() if slug.startswith("image.generate")),
+            },
+            duration_ms=duration_ms,
+            status="clarification" if outcome.requires_clarification else "ok",
         )
+        outcome.usage = {
+            **outcome.usage,
+            "estimated_cost_usd": estimate.estimated_cost_usd,
+            "priced": estimate.priced,
+        }
 
         if outcome.requires_clarification:
             node.status = NodeState.WAITING_FOR_USER
@@ -683,6 +715,7 @@ class RunExecutor:
             "defaults_used": outcome.defaults_used,
             "steps": outcome.steps,
             "tool_calls": calls,
+            "usage": {k: v for k, v in outcome.usage.items() if isinstance(v, int | float | bool)},
         }
         node.resume_state_json = None
 

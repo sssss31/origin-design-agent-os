@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -211,13 +213,65 @@ class ApiUsage(UUIDPrimaryKeyMixin, Base):
     )
     node_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     provider_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("ai_providers.id", ondelete="SET NULL"), nullable=True
+    )
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
+    )
+    agent_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    workflow_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    command: Mapped[str | None] = mapped_column(String(41), nullable=True)
     model: Mapped[str] = mapped_column(String(120), nullable=False)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     tool_calls: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    image_generations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    requests: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    estimated_cost_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0, nullable=False)
+    priced: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, comment="a price row matched"
+    )
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), default="ok", nullable=False, comment="ok | error | clarification | test"
+    )
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ModelPricing(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Admin-configurable prices (USD per million tokens / per image). Never hardcoded."""
+
+    __tablename__ = "model_pricing"
+    __table_args__ = (UniqueConstraint("organization_id", "provider_type", "model"),)
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    model: Mapped[str] = mapped_column(
+        String(120), nullable=False, comment="exact model id or prefix ending with *"
+    )
+    input_per_million: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0, nullable=False)
+    cached_input_per_million: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0, nullable=False)
+    output_per_million: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0, nullable=False)
+    image_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=0, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="USD", nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
 

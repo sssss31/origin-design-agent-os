@@ -29,6 +29,11 @@ Spec references: §6 (providers/secrets), §17 (security & governance), §18 (se
 - [x] Tracing: `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA=false` by default; execution event payloads go through a whitelist schema that rejects reasoning or raw provider payloads.
 - [x] Logs redact secret-looking values and sensitive keys before emission.
 - [x] Rate limiting per user/IP (`RATE_LIMIT_PER_MINUTE`, Redis-backed when available) and per-organization run quotas (`quota_runs_per_day`).
+- [x] **Provider adapters (spec §12–§13).** All model calls run server-side through `app/providers/*`; the OpenAI adapter sends only parameters the selected model supports, retries retryable errors with bounded exponential backoff and never after a tool call (no duplicated image generations), and maps failures to sanitized `ProviderError`s (`Agent temporarily unavailable. Provider connection failed.`) while logging technical detail with redaction.
+- [x] **Key preview only.** `ai_providers.key_preview` (`sk-proj-••••••••7Xk2`) is computed when the key is written; responses expose `configured` + `key_preview`, never the value. Tests assert the plaintext is absent from API responses, audit rows and `secret_refs.ciphertext`.
+- [x] **Custom REST integrations (spec §7–§9, §17).** cURL import moves credentials found in headers, query strings, `-u` or JSON fields into encrypted `integration_secrets` → `secret_refs`; templates hold only `{{secrets.name}}`. Outbound calls pass `app/core/ssrf.py`: https only (`OUTBOUND_ALLOW_HTTP` refused in production), no URL userinfo, private/loopback/link-local/metadata addresses blocked after DNS resolution, optional `OUTBOUND_ALLOWED_HOSTS`, no redirects, bounded timeout and response size, redacted output. Test-API previews mask secret values.
+- [x] **Budgets and quotas (spec §15).** Per-provider `monthly_budget_usd` and `max_requests_per_day` are enforced before every call; organisation run quotas remain in place. Every provider call writes an `api_usage` row with agent/user/workspace/model attribution and an estimated cost from admin-maintained `model_pricing` (no hardcoded prices).
+- [x] **RBAC.** Every `/admin/*` route (providers, integrations, usage, pricing, users, settings) requires the organisation admin role; members and viewers receive 403. Users cannot demote the last admin or deactivate themselves.
 - [x] Security headers on the web app (`X-Frame-Options: DENY`, `nosniff`, referrer policy); API docs disabled in production.
 
 ## Residual risks and follow-ups
@@ -37,7 +42,9 @@ Spec references: §6 (providers/secrets), §17 (security & governance), §18 (se
 |------|-------------------|
 | Refresh token in `localStorage` (XSS exposure) | Access token is memory-only and short-lived; refresh rotation + family revocation limits blast radius. Move refresh to an httpOnly cookie + CSRF token when the app gets a BFF layer. |
 | Malware in uploads | MIME/size validation only. Wire a scanner (ClamAV or a cloud scanning API) into `services/uploads.py` for enterprise tenants. |
-| OpenAI runner not exercised live in CI | Adapter is isolated behind `AgentRunner`; add a nightly smoke job with a scoped key when a staging project exists. |
+| OpenAI runner not exercised live in CI | Adapter is isolated behind `AIProvider`; retries, parameter filtering and error mapping are unit-tested with a fake runner. Add a nightly smoke job with a scoped key when a staging project exists. |
+| DNS rebinding on custom integrations | The host is re-resolved and re-validated immediately before each request; pin resolved IPs at the transport layer if a tenant needs hostile-network guarantees. |
+| Webhook verification | Custom integrations are outbound only in V0; inbound webhooks (and their signature verification) are not exposed. |
 | In-memory rate limiter on multi-replica deployments | Set `REDIS_URL`; the limiter switches to shared counters automatically. |
 | Long-running image jobs on the API process | Use `QUEUE_BACKEND=redis` with dedicated workers in staging/production (compose does this). |
 

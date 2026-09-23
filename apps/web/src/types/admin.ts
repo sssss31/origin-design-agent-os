@@ -258,7 +258,28 @@ export interface AgentOut extends AgentSummaryOut {
   versions: AgentVersionOut[];
 }
 
+export interface TestStep {
+  label: string;
+  status: "done" | "running" | "failed" | "skipped";
+  detail: string | null;
+}
+
+export interface TestUsage {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  tool_calls: number;
+  estimated_cost_usd: number;
+  priced: boolean;
+  attempts: number;
+}
+
 export interface AgentTestOut {
+  steps: TestStep[];
+  usage: TestUsage;
+  error_code: string | null;
+  error_message: string | null;
   agent_slug: string;
   version: number;
   provider_type: string;
@@ -269,7 +290,7 @@ export interface AgentTestOut {
   requires_clarification: boolean;
   question: string | null;
   defaults_used: string[];
-  steps: number;
+  steps_count: number;
   instruction_sections: string[];
   instruction_chars: number;
   tools: string[];

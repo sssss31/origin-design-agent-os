@@ -76,3 +76,55 @@ async def test_rate_limit_headers(client, make_user, monkeypatch) -> None:  # ty
         assert (await limiter.check("k"))[0] is True
     allowed, retry = await limiter.check("k")
     assert allowed is False and retry >= 1
+
+
+async def test_users_and_system_settings_admin(make_user) -> None:  # type: ignore[no-untyped-def]
+    admin = await make_user("admin@example.com", role=Role.ADMIN)
+    members = (await admin.get("/api/v1/admin/users")).json()
+    assert [m["email"] for m in members] == ["admin@example.com"] and members[0]["role"] == "admin"
+    # invite a new account → one-time temporary password; re-invite is a conflict
+    res = await admin.post(
+        "/api/v1/admin/users",
+        json={"email": "designer@origin.local", "display_name": "Dee", "role": "member"},
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["temporary_password"] and res.json()["member"]["role"] == "member"
+    assert (
+        await admin.post("/api/v1/admin/users", json={"email": "designer@origin.local"})
+    ).status_code == 409
+    uid = res.json()["member"]["user_id"]
+    # role change + deactivate; guards: last admin, self-deactivate
+    assert (await admin.patch(f"/api/v1/admin/users/{uid}", json={"role": "viewer"})).json()[
+        "role"
+    ] == "viewer"
+    assert (await admin.patch(f"/api/v1/admin/users/{uid}", json={"is_active": False})).json()[
+        "is_active"
+    ] is False
+    me = next(m for m in (await admin.get("/api/v1/admin/users")).json() if m["email"] == "admin@example.com")
+    assert (
+        await admin.patch(f"/api/v1/admin/users/{me['user_id']}", json={"role": "member"})
+    ).status_code == 422
+    assert (
+        await admin.patch(f"/api/v1/admin/users/{me['user_id']}", json={"is_active": False})
+    ).status_code == 422
+    # system settings round-trip, currency/fx feed the usage summary
+    s = (await admin.get("/api/v1/admin/settings")).json()
+    assert s["display_currency"] == "INR" and s["outbound"]["allow_http"] is False
+    res = await admin.put(
+        "/api/v1/admin/settings",
+        json={
+            "global_rules": "Never use Comic Sans.",
+            "display_currency": "USD",
+            "fx_usd_rate": 1,
+            "quota_runs_per_day": 42,
+        },
+    )
+    assert (
+        res.status_code == 200
+        and res.json()["quota_runs_per_day"] == 42
+        and res.json()["global_rules"] == "Never use Comic Sans."
+    )
+    assert (await admin.get("/api/v1/admin/usage/summary")).json()["currency"] == "USD"
+    member = await make_user("m2@example.com")
+    assert (await member.get("/api/v1/admin/users")).status_code == 403
+    assert (await member.get("/api/v1/admin/settings")).status_code == 403

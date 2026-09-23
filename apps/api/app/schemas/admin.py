@@ -443,9 +443,30 @@ class AgentTestRequest(BaseModel):
     project_id: uuid.UUID | None = None
 
 
+class TestStep(BaseModel):
+    label: str
+    status: Literal["done", "running", "failed", "skipped"]
+    detail: str | None = None
+
+
+class TestUsage(BaseModel):
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    tool_calls: int = 0
+    estimated_cost_usd: float = 0.0
+    priced: bool = False
+    attempts: int = 1
+
+
 class AgentTestOut(BaseModel):
     """Safe trace only: no reasoning, no provider payloads."""
 
+    steps: list[TestStep] = Field(default_factory=list)
+    usage: TestUsage = Field(default_factory=TestUsage)
+    error_code: str | None = None
+    error_message: str | None = None
     agent_slug: str
     version: int
     provider_type: str
@@ -456,7 +477,7 @@ class AgentTestOut(BaseModel):
     requires_clarification: bool
     question: str | None
     defaults_used: list[str]
-    steps: int
+    steps_count: int
     instruction_sections: list[str]
     instruction_chars: int
     tools: list[str]
