@@ -6,7 +6,9 @@ and add the literal to the matching `Settings` field. Nothing else changes.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -71,8 +73,25 @@ def build_secret_store(settings: Settings, session_factory: async_sessionmaker[A
 
     from app.adapters.secrets.fernet_db import FernetSecretStore
 
-    key = settings.encryption_key or Fernet.generate_key().decode()  # ephemeral key in dev only
+    key = settings.encryption_key or _development_key(Fernet.generate_key)
     return FernetSecretStore(key, session_factory)
+
+
+def _development_key(generate: Callable[[], bytes]) -> str:
+    """Outside production a missing ENCRYPTION_KEY is tolerated, but the key must survive
+    restarts (uvicorn --reload) or every stored credential becomes unreadable. Keep it in a
+    git-ignored, owner-only file next to the app."""
+    path = Path(".data") / "dev-encryption.key"
+    try:
+        if path.exists():
+            return path.read_text().strip()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        key = generate().decode()
+        path.write_text(key)
+        path.chmod(0o600)
+        return key
+    except OSError:
+        return generate().decode()
 
 
 def build_queue(settings: Settings) -> JobQueue:

@@ -190,6 +190,7 @@ class SystemSettingsOut(BaseModel):
     quota_runs_per_day: int
     default_max_revisions: int
     default_provider_type: str | None
+    default_agent_id: uuid.UUID | None = None
     outbound: dict[str, Any]
     environment: str
 
@@ -201,6 +202,7 @@ class SystemSettingsIn(BaseModel):
     fx_usd_rate: float | None = Field(default=None, gt=0, le=100000)
     quota_runs_per_day: int | None = Field(default=None, ge=0, le=1_000_000)
     default_max_revisions: int | None = Field(default=None, ge=0, le=5)
+    default_agent_id: uuid.UUID | None = None
 
 
 def _settings_out(org: Organization, settings: Settings) -> SystemSettingsOut:
@@ -214,6 +216,7 @@ def _settings_out(org: Organization, settings: Settings) -> SystemSettingsOut:
         quota_runs_per_day=int(s.get("quota_runs_per_day", settings.default_runs_per_day)),
         default_max_revisions=int(s.get("default_max_revisions", settings.default_max_revisions)),
         default_provider_type=s.get("default_provider_type"),
+        default_agent_id=s.get("default_agent_id"),
         outbound={
             "allow_http": settings.outbound_allow_http,
             "allowed_hosts": settings.outbound_allowed_hosts_list,
@@ -248,6 +251,8 @@ async def update_settings(
     for key in ("display_currency", "fx_usd_rate", "quota_runs_per_day", "default_max_revisions"):
         if key in changes and changes[key] is not None:
             merged[key] = changes[key]
+    if "default_agent_id" in changes:
+        merged["default_agent_id"] = str(changes["default_agent_id"]) if changes["default_agent_id"] else None
     org.settings_json = merged
     await session.flush()
     after = _settings_out(org, settings).model_dump(mode="json")

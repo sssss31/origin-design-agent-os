@@ -190,8 +190,8 @@ class RunService:
                 route = await resolve_route(self.session, org_id, parsed, command_override=data.command)
             else:
                 raise
-        if route.explicit and route.agent.is_manager is False:
-            conv.active_agent_id = route.agent.id
+        if not route.agent.is_manager:
+            conv.active_agent_id = route.agent.id  # whoever answered stays the active agent
         elif route.command == "/auto" or route.agent.is_manager:
             conv.active_agent_id = None
         run = WorkflowRun(
@@ -361,9 +361,10 @@ class RunService:
         run, access = await self._run(run_id, Role.MEMBER)
         if run.status != RunState.FAILED:
             raise ValidationFailed("Only failed runs can be retried", code="run_not_failed")
+        # A person pressing Retry is allowed to re-run any failed step: the `retryable` flag on a
+        # node error only says whether the executor may retry on its own (e.g. a misconfigured
+        # agent key is fixed by an admin, after which the same message should simply run again).
         failed = [n for n in run.nodes if n.status == NodeState.FAILED]
-        if any(not (n.error_json or {}).get("retryable", True) for n in failed):
-            raise ValidationFailed("The failed step is not retryable", code="not_retryable")
         for node in failed:
             node.status = NodeState.PENDING
             node.attempt += 1

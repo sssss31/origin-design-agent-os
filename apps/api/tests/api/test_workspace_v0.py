@@ -246,3 +246,44 @@ async def test_v0_definition_of_done(app, client, make_user, monkeypatch) -> Non
     assert (await fresh.get("/api/v1/work?search=nothing-here")).json() == []
     detail = (await fresh.get(f"/api/v1/work/{conv['id']}")).json()
     assert detail["primary_agent"] in ("Resize Agent", "Design QC Agent")
+
+
+async def test_plain_message_goes_to_default_connected_agent(app, client, make_user, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Chatbot behaviour: with no /command and no sticky agent yet, the organisation's default
+    (or first connected) external agent answers directly — the Manager is not involved."""
+    import app.core.ssrf as ssrf
+
+    monkeypatch.setattr(ssrf, "resolve_host", lambda host: ["93.184.216.34"])
+    admin = await make_user("admin2@example.com", role=Role.ADMIN)
+    _provider, _ws, project = await setup_org(admin)
+    calls: list[dict[str, Any]] = []
+    app.state.adapters.http_transport = _agent_transport(calls)
+
+    seed = await admin.post(f"{ADMIN}/seed/agent-registry", json={"connection_type": "http"})
+    assert seed.status_code == 200
+    agents = {a["command"]: a for a in (await admin.get(f"{ADMIN}/agents")).json()}
+    res = await admin.put(
+        f"{ADMIN}/agents/{agents['/qc']['id']}/connection",
+        json={
+            "connection_type": "http",
+            "api_endpoint": "https://agents.example.com/qc/run",
+            "api_key": "qc-key-ABCDEF7890",
+            "config": {"response_text_path": "reply"},
+        },
+    )
+    assert res.status_code == 200, res.text
+    res = await admin.put(f"{ADMIN}/settings", json={"default_agent_id": agents["/qc"]["id"]})
+    assert res.status_code == 200 and res.json()["default_agent_id"] == agents["/qc"]["id"], res.text
+
+    conv = (
+        await admin.post(f"/api/v1/projects/{project['id']}/conversations", json={"title": "plain"})
+    ).json()
+    res = await admin.post(f"/api/v1/conversations/{conv['id']}/runs", json={"content": "hello there"})
+    assert res.status_code == 202, res.text
+    await drain(app)
+    run = (await admin.get(f"/api/v1/runs/{res.json()['run_id']}")).json()
+    assert run["status"] == "SUCCEEDED", run["error_json"]
+    assert run["command"] == "/qc"
+    assert calls and calls[-1]["path"] == "/qc/run" and calls[-1]["body"]["message"] == "hello there"
+    conv = (await admin.get(f"/api/v1/conversations/{conv['id']}")).json()
+    assert conv["active_agent"]["command"] == "/qc"

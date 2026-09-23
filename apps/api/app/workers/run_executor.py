@@ -908,7 +908,7 @@ class RunExecutor:
             nonlocal pending
             buffer.append(delta)
             pending += len(delta)
-            if pending >= 240:  # stream in readable chunks; every chunk is a durable event (§17)
+            if pending >= 48:  # small chunks so the reply streams like a chatbot; each is a durable event
                 chunk = "".join(buffer[-64:])[-2000:]
                 await recorder.add(
                     EventType.RESPONSE_STREAMING,

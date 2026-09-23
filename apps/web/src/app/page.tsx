@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { ChatApp } from "@/components/chatbot/ChatApp";
 
 export default function Home() {
-  redirect("/chat");
+  return <ChatApp conversationId={null} />;
 }
