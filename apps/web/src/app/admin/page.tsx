@@ -50,7 +50,7 @@ export default function AdminHome() {
     ? [
         ["Active agents", `${counts.activeAgents} / ${counts.agents}`, "/admin/agents"],
         ["Skills", String(counts.skills), "/admin/skills"],
-        ["Providers healthy", `${counts.healthyProviders} / ${counts.providers}`, "/admin/providers"],
+        ["Providers healthy", `${counts.healthyProviders} / ${counts.providers}`, "/admin/integrations"],
         ["Tools", String(counts.tools), "/admin/tools"],
         ["Runs today", usage ? `${usage.runs_today} (${usage.runs_failed_today} failed)` : "—", "/admin/audit"],
         ["Error rate", usage ? `${(usage.error_rate * 100).toFixed(1)}%` : "—", "/admin/audit"],

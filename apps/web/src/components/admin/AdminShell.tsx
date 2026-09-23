@@ -1,24 +1,52 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useSession } from "@/lib/session";
 
-const NAV = [
-  ["/admin", "Dashboard"],
-  ["/admin/agents", "Agents"],
-  ["/admin/skills", "Skills"],
-  ["/admin/providers", "Providers"],
-  ["/admin/tools", "Tools"],
-  ["/admin/audit", "Audit"],
-] as const;
+interface NavItem {
+  href: string;
+  label: string;
+  children?: { href: string; label: string }[];
+}
+
+/** Spec §18 navigation. Sub-items deep-link into the parent page. */
+const NAV: NavItem[] = [
+  { href: "/admin", label: "Dashboard" },
+  {
+    href: "/admin/agents",
+    label: "Agents",
+    children: [
+      { href: "/admin/agents", label: "All Agents" },
+      { href: "/admin/agents?new=1", label: "Create Agent" },
+      { href: "/admin/agents?view=versions", label: "Agent Versions" },
+    ],
+  },
+  { href: "/admin/skills", label: "Skills", children: [{ href: "/admin/skills", label: "All Skills" }, { href: "/admin/skills?new=1", label: "Create Skill" }] },
+  { href: "/admin/tools", label: "Tools", children: [{ href: "/admin/tools", label: "All Tools" }, { href: "/admin/tools?new=1", label: "Create Tool" }] },
+  {
+    href: "/admin/integrations",
+    label: "API Integrations",
+    children: [
+      { href: "/admin/integrations#openai", label: "OpenAI" },
+      { href: "/admin/integrations#custom", label: "Custom APIs" },
+      { href: "/admin/integrations?add=1", label: "Add Integration" },
+    ],
+  },
+  { href: "/admin/usage", label: "Usage & Cost" },
+  { href: "/admin/users", label: "Users" },
+  { href: "/admin/settings", label: "System Settings" },
+  { href: "/admin/audit", label: "Audit" },
+];
 
 export function AdminShell({ title, children }: { title: string; children: React.ReactNode }) {
   const session = useSession();
   const router = useRouter();
   const pathname = usePathname();
   const allowed = session.status === "authenticated" && Boolean(session.me?.capabilities.admin_console);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (session.status === "anonymous") router.replace("/login");
@@ -28,16 +56,33 @@ export function AdminShell({ title, children }: { title: string; children: React
   if (!allowed) return <div className="flex min-h-screen items-center justify-center text-sm text-muted">Loading…</div>;
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-surface p-3">
-        <p className="px-2 text-sm font-semibold">Admin console</p>
-        <p className="mb-4 px-2 text-[11px] text-muted">Runtime configuration</p>
+      <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface p-3">
+        <p className="px-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Admin</p>
+        <p className="mb-3 px-2 text-sm font-semibold">Origin console</p>
         <nav className="space-y-0.5">
-          {NAV.map(([href, label]) => {
-            const active = href === "/admin" ? pathname === href : pathname.startsWith(href);
+          {NAV.map((item) => {
+            const active = item.href === "/admin" ? pathname === item.href : pathname.startsWith(item.href);
+            const expanded = open[item.href] ?? active;
             return (
-              <Link key={href} href={href} className={`block rounded-md px-2 py-1.5 text-sm ${active ? "bg-accent/15 text-accent" : "hover:bg-surface-2"}`}>
-                {label}
-              </Link>
+              <div key={item.href}>
+                <div className={`flex items-center rounded-md ${active ? "bg-accent/15 text-accent" : "hover:bg-surface-2"}`}>
+                  <Link href={item.href} className="flex-1 px-2 py-1.5 text-sm">{item.label}</Link>
+                  {item.children ? (
+                    <button aria-label={`Toggle ${item.label}`} onClick={() => setOpen((o) => ({ ...o, [item.href]: !expanded }))} className="px-2 text-faint">
+                      <ChevronDown size={14} className={`transition ${expanded ? "rotate-180" : ""}`} />
+                    </button>
+                  ) : null}
+                </div>
+                {item.children && expanded ? (
+                  <ul className="ml-3 border-l border-border pl-2">
+                    {item.children.map((c) => (
+                      <li key={c.href}>
+                        <Link href={c.href} className="block rounded-md px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-text">{c.label}</Link>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             );
           })}
         </nav>

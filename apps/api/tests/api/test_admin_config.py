@@ -440,3 +440,22 @@ async def test_provider_delete_refused_while_in_use_and_secret_removal(app, make
     # non-admins cannot reach any provider endpoint
     member = await make_user("m@example.com", role=Role.MEMBER)
     assert (await member.get(f"{BASE}/providers/openai/status")).status_code == 403
+
+
+async def test_integrations_overview_cards(make_user) -> None:  # type: ignore[no-untyped-def]
+    admin = await make_user("admin@example.com", role=Role.ADMIN)
+    provider = await _provider(admin, "openai", "OpenAI Production")
+    await admin.post(f"{BASE}/providers/{provider['id']}/secret", json={"api_key": "sk-proj-abcdefghijklmnop7Xk2"})
+    await admin.put(f"{BASE}/providers/{provider['id']}/models", json={"models": [{"model": "gpt-5"}], "default_model": "gpt-5"})
+    agent = (await admin.post(f"{BASE}/agents", json={"name": "Master Design Agent", "command": "/master", "version": {"instructions": "x", "provider_id": provider["id"], "model": "gpt-5"}})).json()
+    await admin.post(f"{BASE}/agents/{agent['id']}/publish", json={})
+    res = await admin.get(f"{BASE}/integrations/overview")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert {t["type"] for t in body["provider_types"]} == {"openai", "echo"}
+    card = next(c for c in body["providers"] if c["provider"]["id"] == provider["id"])
+    assert card["used_by"] == ["Master Design Agent"] and card["provider"]["key_preview"] == "sk-proj-••••••••7Xk2"
+    assert card["provider"]["models"][0]["resolved_capabilities"]["supports_reasoning"] is True
+    assert "abcdefghijklmnop" not in res.text
+    models = await admin.get(f"{BASE}/providers/{provider['id']}/supported-models")
+    assert models.status_code == 200 and any(m["model"] == "gpt-5" for m in models.json())

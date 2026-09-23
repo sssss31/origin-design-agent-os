@@ -20,9 +20,9 @@ const A = "/admin";
 
 export const providersApi = {
   list: () => api<ProviderOut[]>(`${A}/providers`),
-  create: (body: { name: string; type: string; base_url?: string; default_model?: string }) =>
+  create: (body: { name: string; type: string; base_url?: string; default_model?: string; environment?: string }) =>
     api<ProviderOut>(`${A}/providers`, { method: "POST", body }),
-  update: (id: string, body: Partial<Pick<ProviderOut, "name" | "base_url" | "default_model" | "enabled">>) =>
+  update: (id: string, body: Partial<Pick<ProviderOut, "name" | "base_url" | "default_model" | "enabled" | "environment" | "rate_limit_policy">>) =>
     api<ProviderOut>(`${A}/providers/${id}`, { method: "PATCH", body }),
   setSecret: (id: string, api_key: string) => api<ProviderOut>(`${A}/providers/${id}/secret`, { method: "POST", body: { api_key } }),
   test: (id: string) => api<ProviderTestOut>(`${A}/providers/${id}/test`, { method: "POST" }),
