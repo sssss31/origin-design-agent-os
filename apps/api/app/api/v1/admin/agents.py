@@ -9,6 +9,8 @@ from app.core.authz import DB
 from app.core.deps import AdaptersDep
 from app.schemas.admin import (
     AgentCreate,
+    AgentCurlImportIn,
+    AgentImportOut,
     AgentOut,
     AgentSummaryOut,
     AgentTestOut,
@@ -21,8 +23,8 @@ from app.schemas.admin import (
     SkillOrderIn,
     ToolBindingIn,
 )
-from app.services.admin_serializers import agent_out, agent_summary_out
-from app.services.agents import AgentService
+from app.services.admin_serializers import agent_out, agent_summary_out, provider_out
+from app.services.agents import AgentService, import_agent_from_curl
 
 router = APIRouter(prefix="/agents")
 
@@ -35,6 +37,39 @@ async def list_agents(ctx: AdminAuth, session: DB) -> list[AgentSummaryOut]:
 @router.post("", response_model=AgentOut, status_code=status.HTTP_201_CREATED)
 async def create_agent(body: AgentCreate, ctx: AdminAuth, session: DB) -> AgentOut:
     return await agent_out(session, await AgentService(session, ctx).create(body))
+
+
+@router.post("/import-curl", response_model=AgentImportOut, status_code=status.HTTP_201_CREATED)
+async def import_agent_curl(
+    body: AgentCurlImportIn, ctx: AdminAuth, session: DB, adapters: AdaptersDep
+) -> AgentImportOut:
+    """Paste the agent's OpenAI cURL: provider key + model are configured and the agent is created."""
+    from app.api.v1.admin.providers import _curl_preview
+    from app.services.providers import ProviderService
+
+    agent, provider, detected, published = await import_agent_from_curl(session, ctx, body, adapters)
+    svc = ProviderService(session, ctx)
+    connection = None
+    if provider.secret_ref_id is not None:
+        result = await svc.test(provider.id, adapters.secrets)
+        from app.schemas.admin import ProviderConnectionOut
+
+        connection = ProviderConnectionOut(
+            success=result.ok,
+            provider=provider.type,
+            status="connected" if result.ok else "failed",
+            message=result.message,
+            latency_ms=result.latency_ms,
+            available_models=result.available_models,
+            tested_at=result.tested_at,
+        )
+    return AgentImportOut(
+        agent=await agent_out(session, agent),
+        provider=provider_out(await svc.get(provider.id), is_default=await svc.is_default(provider.id)),
+        detected=_curl_preview(detected),
+        published=published,
+        connection=connection,
+    )
 
 
 @router.get("/{agent_id}", response_model=AgentOut)

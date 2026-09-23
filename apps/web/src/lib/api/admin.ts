@@ -1,6 +1,7 @@
 import { API_BASE, api } from "@/lib/api/client";
 import { tokenStore } from "@/lib/token-store";
 import type {
+  AgentImportOut,
   AgentOut,
   AgentSummaryOut,
   AgentTestOut,
@@ -8,6 +9,8 @@ import type {
   CommandOut,
   ModelCapabilities,
   ProviderConnectionOut,
+  ProviderCurlPreview,
+  ProviderImportOut,
   ProviderOut,
   ProviderStatusOut,
   ProviderTestOut,
@@ -31,6 +34,8 @@ export const providersApi = {
   deleteSecret: (id: string) => api<ProviderOut>(`${A}/providers/${id}/secret`, { method: "DELETE" }),
   remove: (id: string) => api<void>(`${A}/providers/${id}`, { method: "DELETE" }),
   setDefault: (id: string) => api<ProviderOut>(`${A}/providers/${id}/set-default`, { method: "POST" }),
+  parseCurl: (curl: string) => api<ProviderCurlPreview>(`${A}/providers/parse-curl`, { method: "POST", body: { curl } }),
+  importCurl: (body: { curl: string; name?: string; environment?: string; set_default?: boolean }) => api<ProviderImportOut>(`${A}/providers/import-curl`, { method: "POST", body }),
   adopt: (id: string) => api<{ switched: number; skipped: number; failed: number }>(`${A}/providers/${id}/adopt`, { method: "POST" }),
   supportedModels: (id: string) => api<{ model: string; display_name: string; capabilities: ModelCapabilities }[]>(`${A}/providers/${id}/supported-models`),
   setModels: (id: string, models: { model: string; enabled?: boolean }[], default_model: string | null) =>
@@ -80,6 +85,8 @@ export const agentsApi = {
   get: (id: string) => api<AgentOut>(`${A}/agents/${id}`),
   create: (body: { name: string; command: string; description?: string; is_manager?: boolean; version?: AgentVersionInput }) =>
     api<AgentOut>(`${A}/agents`, { method: "POST", body }),
+  importCurl: (body: { curl: string; name: string; command: string; description?: string; instructions?: string; publish?: boolean }) =>
+    api<AgentImportOut>(`${A}/agents/import-curl`, { method: "POST", body }),
   update: (id: string, body: Partial<Pick<AgentOut, "name" | "command" | "description" | "is_manager" | "status">>) =>
     api<AgentOut>(`${A}/agents/${id}`, { method: "PATCH", body }),
   saveDraft: (id: string, body: AgentVersionInput) => api<AgentOut>(`${A}/agents/${id}/versions`, { method: "POST", body }),

@@ -567,3 +567,92 @@ async def test_skill_reorder_toggle_and_sandbox_test(make_user) -> None:  # type
     ).json()
     res = await admin.post(f"{BASE}/agents/{bad_temp['id']}/publish", json={})
     assert res.status_code == 422 and any("temperature" in p for p in res.json()["error"]["details"])
+
+
+async def test_curl_pasted_as_key_and_agent_import_from_curl(app, make_user, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.models.governance import SecretRef
+    from app.services import providers as providers_module
+    from sqlalchemy import select
+
+    async def fake_probe(provider_type: str, base_url: str | None, api_key: str | None):  # type: ignore[no-untyped-def]
+        ok = api_key == "sk-proj-REALKEY0123456789abcdef7Xk2"
+        return providers_module.ProbeResult(
+            ok=ok,
+            message="authenticated" if ok else "Authentication failed: the API key was rejected.",
+            models=["gpt-5"] if ok else [],
+        )
+
+    monkeypatch.setattr(providers_module, "probe_provider", fake_probe)
+    admin = await make_user("admin@example.com", role=Role.ADMIN)
+    curl = (
+        'curl https://api.openai.com/v1/responses -H "Authorization: Bearer sk-proj-REALKEY0123456789abcdef7Xk2" '
+        '-H "Content-Type: application/json" -d \'{"model": "gpt-5", "instructions": "You are the Master Design Agent.", "input": "hi", "reasoning": {"effort": "low"}}\''
+    )
+    # 1. the whole cURL pasted into the key field: the token is extracted, the cURL text is never stored
+    provider = await _provider(admin, "openai", "OpenAI Production")
+    res = await admin.post(f"{BASE}/providers/{provider['id']}/secret", json={"api_key": curl})
+    assert res.status_code == 200, res.text
+    assert res.json()["key_preview"] == "sk-proj-••••••••7Xk2"
+    bad = await admin.post(
+        f"{BASE}/providers/{provider['id']}/secret", json={"api_key": "not a key with spaces"}
+    )
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "invalid_api_key"
+    placeholder = await admin.post(
+        f"{BASE}/providers/{provider['id']}/secret",
+        json={
+            "api_key": 'curl https://api.openai.com/v1/responses -H "Authorization: Bearer $OPENAI_API_KEY" -d \'{"model":"gpt-5"}\''
+        },
+    )
+    assert placeholder.status_code == 422 and placeholder.json()["error"]["code"] == "key_placeholder"
+    assert (await admin.post(f"{BASE}/providers/{provider['id']}/test")).json()["ok"] is True
+
+    # 2. preview never returns the key
+    pv = await admin.post(f"{BASE}/providers/parse-curl", json={"curl": curl})
+    assert (
+        pv.status_code == 200
+        and pv.json()["key_preview"] == "sk-proj-••••••••7Xk2"
+        and pv.json()["model"] == "gpt-5"
+    )
+    assert "REALKEY" not in pv.text
+
+    # 3. one paste creates the agent: provider reused, model allowlisted, default provider set, published
+    res = await admin.post(
+        f"{BASE}/agents/import-curl", json={"curl": curl, "name": "Master Design Agent", "command": "/master"}
+    )
+    assert res.status_code == 201, res.text
+    out = res.json()
+    assert (
+        out["published"] is True
+        and out["provider"]["id"] == provider["id"]
+        and out["provider"]["is_default"] is True
+    )
+    assert out["connection"]["success"] is True
+    assert [m["model"] for m in out["provider"]["models"]] == ["gpt-5"] and out["provider"][
+        "default_model"
+    ] == "gpt-5"
+    agent = out["agent"]
+    assert agent["status"] == "active" and agent["active_version"]["model"] == "gpt-5"
+    assert agent["active_version"]["instructions"] == "You are the Master Design Agent."
+    assert agent["active_version"]["model_settings"] == {"reasoning_effort": "low"}
+    assert "REALKEY" not in res.text
+    async with app.state.session_factory() as session:
+        for ref in (await session.scalars(select(SecretRef))).all():
+            assert "REALKEY" not in (ref.ciphertext or "") and "curl" not in (ref.ciphertext or "")
+    member = await make_user("m@example.com", role=Role.MEMBER)
+    assert [c["command"] for c in (await member.get("/api/v1/agents/commands")).json()] == ["/master"]
+
+    # 4. a cURL without instructions stays a draft with a clear warning
+    res = await admin.post(
+        f"{BASE}/agents/import-curl",
+        json={
+            "curl": 'curl https://api.openai.com/v1/responses -H "Authorization: Bearer sk-proj-REALKEY0123456789abcdef7Xk2" -d \'{"model":"gpt-5","prompt":{"id":"pmpt_123"}}\'',
+            "name": "Prompt Agent",
+            "command": "/prompt",
+        },
+    )
+    assert (
+        res.status_code == 201
+        and res.json()["published"] is False
+        and res.json()["detected"]["prompt_id"] == "pmpt_123"
+    )
+    assert any("stored prompt" in w for w in res.json()["detected"]["warnings"])

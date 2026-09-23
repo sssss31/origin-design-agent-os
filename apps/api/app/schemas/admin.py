@@ -42,9 +42,73 @@ class ProviderUpdate(BaseModel):
 
 
 class ProviderSecretIn(BaseModel):
-    """Write-only. The value is stored through SecretStore and never returned."""
+    """Write-only. The value is stored through SecretStore and never returned.
 
-    api_key: str = Field(min_length=8, max_length=4096)
+    A pasted cURL is accepted too: the Bearer token is extracted server-side (spec: one paste).
+    """
+
+    api_key: str = Field(min_length=8, max_length=50_000)
+
+
+class ProviderCurlIn(BaseModel):
+    curl: str = Field(min_length=8, max_length=50_000)
+    name: str | None = Field(default=None, max_length=160)
+    environment: Environment = "production"
+    set_default: bool = True
+
+
+class ProviderCurlPreview(BaseModel):
+    provider_type: str
+    base_url: str
+    endpoint_kind: str
+    has_key: bool
+    key_placeholder: bool
+    key_preview: str | None
+    model: str | None
+    instructions: str | None
+    sample_input: str | None
+    model_settings: dict[str, Any]
+    has_output_schema: bool
+    prompt_id: str | None
+    tools: list[str]
+    warnings: list[str]
+    summary: dict[str, Any]
+
+
+class ProviderImportOut(BaseModel):
+    provider: ProviderOut
+    detected: ProviderCurlPreview
+    connection: ProviderConnectionOut | None = None
+    created: bool
+
+
+class AgentCurlImportIn(BaseModel):
+    """One paste → provider key + model + agent (spec: 'the curl api of the agent')."""
+
+    curl: str = Field(min_length=8, max_length=50_000)
+    name: str = Field(min_length=1, max_length=160)
+    command: str = Field(min_length=2, max_length=41)
+    description: str = ""
+    instructions: str | None = Field(
+        default=None, description="override/complete the instructions found in the cURL"
+    )
+    publish: bool = True
+
+    @field_validator("command")
+    @classmethod
+    def _command(cls, v: str) -> str:
+        v = normalize_command(v)
+        if not is_valid_command(v):
+            raise ValueError("command must look like /resize (lowercase letters, digits, - or _)")
+        return v
+
+
+class AgentImportOut(BaseModel):
+    agent: AgentOut
+    provider: ProviderOut
+    detected: ProviderCurlPreview
+    published: bool
+    connection: ProviderConnectionOut | None = None
 
 
 class ProviderModelIn(BaseModel):

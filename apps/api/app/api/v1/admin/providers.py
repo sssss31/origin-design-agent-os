@@ -9,10 +9,15 @@ from app.api.v1.admin import AdminAuth
 from app.core.authz import DB, AuthContext
 from app.core.deps import AdaptersDep
 from app.core.errors import NotFound
+from app.domain.provider_curl import ProviderCurl
 from app.models.providers import AIProvider
+from app.ports.secrets import key_preview
 from app.schemas.admin import (
     ProviderConnectionOut,
     ProviderCreate,
+    ProviderCurlIn,
+    ProviderCurlPreview,
+    ProviderImportOut,
     ProviderModelOut,
     ProviderModelsSet,
     ProviderOut,
@@ -35,6 +40,66 @@ async def list_providers(ctx: AdminAuth, session: DB) -> list[ProviderOut]:
 
 
 PROVIDER_TYPES = ("openai", "echo")
+
+
+def _curl_preview(d: ProviderCurl) -> ProviderCurlPreview:
+    return ProviderCurlPreview(
+        provider_type=d.provider_type,
+        base_url=d.base_url,
+        endpoint_kind=d.endpoint_kind,
+        has_key=d.api_key is not None,
+        key_placeholder=d.key_placeholder,
+        key_preview=key_preview(d.api_key) if d.api_key else None,
+        model=d.model,
+        instructions=d.instructions,
+        sample_input=d.sample_input,
+        model_settings=d.model_settings,
+        has_output_schema=d.output_schema is not None,
+        prompt_id=d.prompt_id,
+        tools=d.tools,
+        warnings=d.warnings,
+        summary=d.summary(),
+    )
+
+
+@router.post("/parse-curl", response_model=ProviderCurlPreview)
+async def parse_provider_curl_preview(body: ProviderCurlIn, ctx: AdminAuth) -> ProviderCurlPreview:
+    """Dry run: what a pasted OpenAI cURL contains (key shown masked only)."""
+    return _curl_preview(ProviderService.preview_curl(body.curl))
+
+
+@router.post("/import-curl", response_model=ProviderImportOut, status_code=status.HTTP_201_CREATED)
+async def import_provider_curl(
+    body: ProviderCurlIn, ctx: AdminAuth, session: DB, adapters: AdaptersDep
+) -> ProviderImportOut:
+    """One paste: key stored encrypted, base URL, model allowlisted, default provider, connection tested."""
+    svc = ProviderService(session, ctx)
+    row, detected, created = await svc.import_curl(
+        body.curl,
+        adapters.secrets,
+        name=body.name,
+        environment=body.environment,
+        set_default=body.set_default,
+    )
+    connection: ProviderConnectionOut | None = None
+    if row.secret_ref_id is not None:
+        result = await svc.test(row.id, adapters.secrets)
+        connection = ProviderConnectionOut(
+            success=result.ok,
+            provider=row.type,
+            status="connected" if result.ok else "failed",
+            message=result.message,
+            latency_ms=result.latency_ms,
+            available_models=result.available_models,
+            tested_at=result.tested_at,
+        )
+    row = await svc.get(row.id)
+    return ProviderImportOut(
+        provider=provider_out(row, is_default=await svc.is_default(row.id)),
+        detected=_curl_preview(detected),
+        connection=connection,
+        created=created,
+    )
 
 
 def _as_uuid(value: str) -> uuid.UUID | None:

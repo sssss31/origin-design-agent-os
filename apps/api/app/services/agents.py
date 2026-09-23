@@ -15,6 +15,7 @@ from app.adapters.registry import Adapters
 from app.core.authz import AuthContext
 from app.core.errors import Conflict, NotFound, RateLimited, ValidationFailed
 from app.db.base import utcnow
+from app.domain.provider_curl import ProviderCurl
 from app.domain.slugs import slugify
 from app.models.agents import Agent, AgentHandoff, AgentSkillBinding, AgentToolBinding, AgentVersion
 from app.models.identity import Organization
@@ -26,6 +27,7 @@ from app.ports.runner import RunInput
 from app.providers.base import ProviderError
 from app.schemas.admin import (
     AgentCreate,
+    AgentCurlImportIn,
     AgentTestOut,
     AgentTestRequest,
     AgentUpdate,
@@ -40,7 +42,7 @@ from app.schemas.admin import (
 from app.services import audit
 from app.services.agent_factory import build_runtime_agent, default_provider
 from app.services.composer import ComposedSkill
-from app.services.providers import provider_adapters
+from app.services.providers import ProviderService, provider_adapters
 from app.services.usage import UsageContext, enforce_provider_limits, record_usage
 
 VERSION_FIELDS = (
@@ -809,6 +811,39 @@ class AgentService:
             tools=[t.slug for t in resolved.runtime.tools] if resolved else [],
             duration_ms=duration,
         )
+
+
+async def import_agent_from_curl(
+    session: AsyncSession,
+    ctx: AuthContext,
+    data: AgentCurlImportIn,
+    adapters: Adapters,
+) -> tuple[Agent, AIProvider, ProviderCurl, bool]:
+    """Provider key + model from the cURL, then an agent draft (published when instructions exist)."""
+    providers = ProviderService(session, ctx)
+    provider, detected, _ = await providers.import_curl(data.curl, adapters.secrets, set_default=True)
+    instructions = (data.instructions or detected.instructions or "").strip()
+    agents = AgentService(session, ctx)
+    agent = await agents.create(
+        AgentCreate(
+            name=data.name,
+            command=data.command,
+            description=data.description or (f"Imported from cURL ({detected.endpoint_kind})"),
+            version=AgentVersionInput(
+                provider_id=provider.id,
+                model=detected.model or provider.default_model,
+                instructions=instructions,
+                model_settings=detected.model_settings,
+                output_schema=detected.output_schema or {},
+                change_note="imported from cURL",
+            ),
+        )
+    )
+    published = False
+    if data.publish and instructions:
+        agent = await agents.publish(agent.id, PublishRequest(change_note="imported from cURL"))
+        published = True
+    return agent, provider, detected, published
 
 
 async def list_commands(session: AsyncSession, organization_id: uuid.UUID) -> list[Agent]:

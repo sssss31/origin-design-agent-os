@@ -7,8 +7,8 @@ import { AdminShell, useAsyncAction } from "@/components/admin/AdminShell";
 import { Button } from "@/components/ui/Button";
 import { Badge, Card, CardTitle, EmptyState, ErrorText } from "@/components/ui/Card";
 import { Field, Input, Textarea } from "@/components/ui/Input";
-import { agentsApi } from "@/lib/api/admin";
-import type { AgentSummaryOut } from "@/types/admin";
+import { agentsApi, providersApi } from "@/lib/api/admin";
+import type { AgentSummaryOut, ProviderCurlPreview } from "@/types/admin";
 
 const tone = { active: "success", draft: "warning", disabled: "neutral" } as const;
 
@@ -22,6 +22,9 @@ export default function AgentsPage() {
   const [command, setCommand] = useState("");
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [mode, setMode] = useState<"form" | "curl">("form");
+  const [curl, setCurl] = useState("");
+  const [preview, setPreview] = useState<ProviderCurlPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -70,11 +73,21 @@ export default function AgentsPage() {
         <aside>
           <Card>
             <CardTitle>Create agent</CardTitle>
+            <div className="mb-3 flex w-fit gap-1 rounded-lg border border-border bg-surface p-0.5">
+              {(["curl", "form"] as const).map((m) => (
+                <button key={m} type="button" onClick={() => setMode(m)} className={`rounded-md px-3 py-1 text-xs font-medium ${mode === m ? "bg-accent-soft text-accent" : "text-muted hover:text-text"}`}>{m === "curl" ? "From the agent's cURL" : "Manually"}</button>
+              ))}
+            </div>
             <form
               className="space-y-3"
               onSubmit={(e) => {
                 e.preventDefault();
                 void run(async () => {
+                  if (mode === "curl") {
+                    const out = await agentsApi.importCurl({ curl, name, command, description, instructions: instructions || undefined });
+                    router.push(`/admin/agents/${out.agent.id}`);
+                    return;
+                  }
                   const created = await agentsApi.create({ name, command, description, version: { instructions } });
                   router.push(`/admin/agents/${created.id}`);
                 }, setError);
@@ -83,9 +96,25 @@ export default function AgentsPage() {
               <Field label="Name"><Input required value={name} onChange={(e) => setName(e.target.value)} /></Field>
               <Field label="Slash command" hint="lowercase, e.g. /resize"><Input required value={command} onChange={(e) => setCommand(e.target.value)} placeholder="/resize" /></Field>
               <Field label="Routing description"><Input value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
-              <Field label="Initial instructions"><Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} /></Field>
+              {mode === "curl" ? (
+                <>
+                  <Field label="Agent cURL (OpenAI Responses or Chat Completions)" hint="The Bearer token becomes the provider key (encrypted), the model is allowlisted, and instructions/settings are copied into the agent. The command is not stored.">
+                    <Textarea rows={8} className="font-mono text-xs" value={curl} onChange={(e) => { setCurl(e.target.value); setPreview(null); }} placeholder={'curl https://api.openai.com/v1/responses -H "Authorization: Bearer sk-…" -d \'{"model":"gpt-5","instructions":"…"}\''} />
+                  </Field>
+                  {preview ? (
+                    <div className="rounded-md border border-border p-2 text-xs">
+                      <p><b>{preview.model ?? "no model"}</b> · {preview.endpoint_kind} · key {preview.key_preview ?? (preview.key_placeholder ? "placeholder ⚠" : "missing")} · instructions {preview.instructions ? `${preview.instructions.length} chars` : "none (add below)"}</p>
+                      {preview.warnings.map((w) => <p key={w} className="text-warning">⚠ {w}</p>)}
+                    </div>
+                  ) : null}
+                  <Button type="button" variant="secondary" disabled={curl.trim().length < 8} onClick={() => void run(async () => setPreview(await providersApi.parseCurl(curl)), setError)}>Preview</Button>
+                  <Field label={preview?.instructions ? "Instructions (override, optional)" : "Instructions"} hint="Used when the cURL has none (e.g. it references a stored prompt id)."><Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} /></Field>
+                </>
+              ) : (
+                <Field label="Initial instructions"><Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} /></Field>
+              )}
               <ErrorText>{error}</ErrorText>
-              <Button type="submit" disabled={!name.trim() || !command.trim()}>Create draft</Button>
+              <Button type="submit" disabled={!name.trim() || !command.trim() || (mode === "curl" && curl.trim().length < 8)}>{mode === "curl" ? "Import & create" : "Create draft"}</Button>
             </form>
           </Card>
         </aside>

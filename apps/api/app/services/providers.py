@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,11 +16,18 @@ from sqlalchemy.orm import selectinload
 from app.core.authz import AuthContext
 from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.core.logging import redact
+from app.domain.provider_curl import ProviderCurl, looks_like_curl, parse_provider_curl
 from app.domain.slugs import slugify
 from app.models.providers import AIProvider, ProviderModel
 from app.ports.secrets import SecretStore, key_preview
 from app.providers.base import AIProvider as ProviderAdapter
-from app.schemas.admin import ProviderCreate, ProviderModelsSet, ProviderTestOut, ProviderUpdate
+from app.schemas.admin import (
+    ProviderCreate,
+    ProviderModelIn,
+    ProviderModelsSet,
+    ProviderTestOut,
+    ProviderUpdate,
+)
 from app.services import audit
 
 DEFAULT_BASE_URLS = {"openai": "https://api.openai.com/v1"}
@@ -140,7 +148,32 @@ class ProviderService:
         await self._audit("provider.updated", row.id, before=before, after=_snapshot(row))
         return await self.get(row.id)
 
+    @staticmethod
+    def normalize_key(value: str) -> str:
+        """Accept a bare key or a pasted cURL; reject anything that cannot be a credential."""
+        text = value.strip()
+        if looks_like_curl(text):
+            try:
+                detected = parse_provider_curl(text)
+            except ValueError as exc:
+                raise ValidationFailed(f"Could not read the cURL: {exc}", code="curl_parse_failed") from exc
+            if detected.key_placeholder or not detected.api_key:
+                raise ValidationFailed(
+                    "The cURL does not contain a real API key (it has a placeholder such as "
+                    "$OPENAI_API_KEY). Paste the key itself.",
+                    code="key_placeholder",
+                )
+            return detected.api_key
+        if any(ch.isspace() for ch in text) or len(text) < 8:
+            raise ValidationFailed(
+                "This does not look like an API key (keys contain no spaces). "
+                "Paste only the key, or import a cURL.",
+                code="invalid_api_key",
+            )
+        return text
+
     async def set_secret(self, provider_id: uuid.UUID, api_key: str, secrets: SecretStore) -> AIProvider:
+        api_key = self.normalize_key(api_key)
         row = await self.get(provider_id)
         before = {"secret_fingerprint": row.secret_fingerprint}
         if row.secret_ref_id:
@@ -358,3 +391,83 @@ class ProviderService:
             "provider.adopted", row.id, after={"switched": switched, "skipped": skipped, "failed": failed}
         )
         return {"switched": switched, "skipped": skipped, "failed": failed}
+
+    # ------------------------------------------------------------------ cURL import (one paste)
+    @staticmethod
+    def preview_curl(text: str) -> ProviderCurl:
+        try:
+            return parse_provider_curl(text)
+        except ValueError as exc:
+            raise ValidationFailed(f"Could not read the cURL: {exc}", code="curl_parse_failed") from exc
+
+    async def import_curl(
+        self,
+        text: str,
+        secrets: SecretStore,
+        *,
+        name: str | None = None,
+        environment: str = "production",
+        set_default: bool = True,
+    ) -> tuple[AIProvider, ProviderCurl, bool]:
+        """Create or update the provider described by a cURL: key, base URL, model allowlist, default."""
+        detected = self.preview_curl(text)
+        if detected.provider_type != "openai":
+            raise ValidationFailed(
+                "This cURL is not an OpenAI-compatible request; add it under Custom REST APIs instead.",
+                code="not_a_provider_curl",
+            )
+        existing = next(
+            (
+                p
+                for p in await self.list()
+                if p.type == "openai"
+                and (p.base_url or DEFAULT_BASE_URLS["openai"]).rstrip("/") == detected.base_url.rstrip("/")
+            ),
+            None,
+        )
+        created = False
+        if existing is None:
+            existing = await self.create(
+                ProviderCreate(
+                    name=name
+                    or (
+                        "OpenAI Production"
+                        if "api.openai.com" in detected.base_url
+                        else f"OpenAI-compatible ({urlsplit(detected.base_url).netloc})"
+                    ),
+                    type="openai",
+                    base_url=detected.base_url,
+                    environment=environment,
+                )
+            )
+            created = True
+        elif name and existing.name != name:
+            existing.name = name
+        if detected.api_key:
+            existing = await self.set_secret(existing.id, detected.api_key, secrets)
+        if detected.model:
+            models = [
+                ProviderModelIn(
+                    model=m.model, display_name=m.display_name, capabilities=m.capabilities, enabled=m.enabled
+                )
+                for m in existing.models
+            ]
+            if all(m.model != detected.model for m in models):
+                models.append(ProviderModelIn(model=detected.model))
+            existing = await self.set_models(
+                existing.id,
+                ProviderModelsSet(models=models, default_model=existing.default_model or detected.model),
+            )
+        if set_default and (existing.secret_ref_id is not None):
+            await self.set_default(existing.id)
+        await self._audit(
+            "provider.imported_from_curl",
+            existing.id,
+            after={
+                "created": created,
+                "model": detected.model,
+                "endpoint": detected.endpoint_kind,
+                "base_url": detected.base_url,
+            },
+        )
+        return await self.get(existing.id), detected, created

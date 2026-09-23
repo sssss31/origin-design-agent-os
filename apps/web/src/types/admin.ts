@@ -298,6 +298,39 @@ export interface AgentTestOut {
   duration_ms: number;
 }
 
+export interface ProviderCurlPreview {
+  provider_type: string;
+  base_url: string;
+  endpoint_kind: string;
+  has_key: boolean;
+  key_placeholder: boolean;
+  key_preview: string | null;
+  model: string | null;
+  instructions: string | null;
+  sample_input: string | null;
+  model_settings: Record<string, unknown>;
+  has_output_schema: boolean;
+  prompt_id: string | null;
+  tools: string[];
+  warnings: string[];
+  summary: Record<string, string>;
+}
+
+export interface ProviderImportOut {
+  provider: ProviderOut;
+  detected: ProviderCurlPreview;
+  connection: ProviderConnectionOut | null;
+  created: boolean;
+}
+
+export interface AgentImportOut {
+  agent: AgentOut;
+  provider: ProviderOut;
+  detected: ProviderCurlPreview;
+  published: boolean;
+  connection: ProviderConnectionOut | null;
+}
+
 export interface CommandOut {
   agent_id: string;
   name: string;

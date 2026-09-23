@@ -110,10 +110,11 @@ function ProviderCard({ card, onChanged, onReconfigure }: { card: ProviderCardDa
         <dt className="text-muted">Requests</dt><dd>{card.requests_month.toLocaleString()}{card.avg_latency_ms != null ? ` · ${card.avg_latency_ms} ms avg` : ""}</dd>
         <dt className="text-muted">Used by</dt><dd>{card.used_by.join(", ") || "no active agents"}</dd>
       </dl>
+      {p.type === "openai" && p.key_preview && !/^sk-/.test(p.key_preview) ? <p className="rounded-md bg-warning/10 p-2 text-xs text-warning">The stored credential does not look like an OpenAI key ({p.key_preview}). A cURL command was probably pasted into the key field — use <b>Update Key</b> and paste only the key, or paste the cURL there and the token will be extracted.</p> : null}
       {test ? <p className={`text-xs ${test.success ? "text-success" : "text-danger"}`}>{test.success ? "🟢 Connected" : "🔴 Connection Failed"} — {test.message} ({test.latency_ms} ms)</p> : p.health_message ? <p className="text-xs text-muted">{p.health_message}{p.last_tested_at ? ` · ${new Date(p.last_tested_at).toLocaleString()}` : ""}</p> : null}
       {rotating ? (
         <div className="flex gap-2">
-          <Input type="password" autoComplete="off" placeholder="Paste the new API key" value={key} onChange={(e) => setKey(e.target.value)} />
+          <Input type="password" autoComplete="off" placeholder="Paste the new API key (or the agent's cURL — the token is extracted)" value={key} onChange={(e) => setKey(e.target.value)} />
           <Button disabled={key.length < 20 || busy} onClick={() => { setBusy(true); void run(async () => { await providersApi.setSecret(p.id, key); setKey(""); setRotating(false); onChanged(); }, setError).finally(() => setBusy(false)); }}>Update key</Button>
           <Button variant="ghost" onClick={() => setRotating(false)}>Cancel</Button>
         </div>

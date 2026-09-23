@@ -4,9 +4,9 @@ import { Check, Loader2, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Badge, Card, CardTitle, ErrorText } from "@/components/ui/Card";
-import { Field, Input } from "@/components/ui/Input";
+import { Field, Input, Textarea } from "@/components/ui/Input";
 import { providersApi } from "@/lib/api/admin";
-import type { ProviderConnectionOut, ProviderOut } from "@/types/admin";
+import type { ProviderConnectionOut, ProviderCurlPreview, ProviderOut } from "@/types/admin";
 
 const STEPS = ["Enter API key", "Test connection", "Choose allowed models", "Configure usage limits", "Save"];
 
@@ -16,6 +16,9 @@ export function OpenAIConnectWizard({ existing, onDone, onCancel }: { existing?:
   const [name, setName] = useState(existing?.name ?? "OpenAI Production");
   const [environment, setEnvironment] = useState(existing?.environment ?? "production");
   const [apiKey, setApiKey] = useState("");
+  const [keyMode, setKeyMode] = useState<"key" | "curl">("key");
+  const [curlText, setCurlText] = useState("");
+  const [curlPreview, setCurlPreview] = useState<ProviderCurlPreview | null>(null);
   const [provider, setProvider] = useState<ProviderOut | null>(existing ?? null);
   const [test, setTest] = useState<ProviderConnectionOut | null>(null);
   const [visible, setVisible] = useState<string[]>([]);
@@ -38,6 +41,21 @@ export function OpenAIConnectWizard({ existing, onDone, onCancel }: { existing?:
       setBusy(false);
     }
   };
+
+  const importCurl = () =>
+    guard(async () => {
+      const out = await providersApi.importCurl({ curl: curlText, name, environment, set_default: true });
+      setProvider(out.provider);
+      setCurlText("");
+      setCurlPreview(null);
+      if (out.connection) {
+        setTest(out.connection);
+        setVisible(out.connection.available_models);
+      }
+      setSelected(out.provider.models.map((m) => m.model));
+      setDefaultModel(out.provider.default_model ?? "");
+      setStep(out.connection?.success ? 2 : 1);
+    });
 
   const saveKey = () =>
     guard(async () => {
@@ -109,10 +127,39 @@ export function OpenAIConnectWizard({ existing, onDone, onCancel }: { existing?:
               <option value="development">Development</option>
             </select>
           </Field>
-          <Field label="API key" hint="Sent once to the server, encrypted at rest, never shown again.">
-            <Input type="password" autoComplete="off" placeholder={provider?.has_secret ? `Stored: ${provider.key_preview} — paste a new key to rotate` : "sk-proj-…"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-          </Field>
-          <Button disabled={busy || (!apiKey && !provider?.has_secret) || (apiKey.length > 0 && apiKey.length < 20)} onClick={() => void saveKey()}>{busy ? <Loader2 size={14} className="animate-spin" /> : null} {provider?.has_secret && !apiKey ? "Keep stored key" : "Save key"}</Button>
+          <div className="flex w-fit gap-1 rounded-lg border border-border bg-surface p-0.5">
+            {(["key", "curl"] as const).map((m) => (
+              <button key={m} type="button" onClick={() => setKeyMode(m)} className={`rounded-md px-3 py-1 text-xs font-medium ${keyMode === m ? "bg-accent-soft text-accent" : "text-muted hover:text-text"}`}>{m === "key" ? "Paste API key" : "Paste the agent's cURL"}</button>
+            ))}
+          </div>
+          {keyMode === "key" ? (
+            <>
+              <Field label="API key" hint="Only the key (sk-…). Sent once to the server, encrypted at rest, never shown again. If you paste a whole cURL here, the Bearer token is extracted automatically.">
+                <Input type="password" autoComplete="off" placeholder={provider?.has_secret ? `Stored: ${provider.key_preview} — paste a new key to rotate` : "sk-proj-…"} value={apiKey} onChange={(e) => { const v = e.target.value; setApiKey(v); if (/^\s*curl\s/i.test(v)) { setKeyMode("curl"); setCurlText(v); setApiKey(""); } }} />
+              </Field>
+              <Button disabled={busy || (!apiKey && !provider?.has_secret) || (apiKey.length > 0 && apiKey.length < 20)} onClick={() => void saveKey()}>{busy ? <Loader2 size={14} className="animate-spin" /> : null} {provider?.has_secret && !apiKey ? "Keep stored key" : "Save key"}</Button>
+            </>
+          ) : (
+            <>
+              <Field label="OpenAI cURL" hint="Paste the request from the OpenAI playground/dashboard. The Bearer token is stored encrypted, the base URL and model are configured, and nothing else from the command is kept.">
+                <Textarea rows={8} className="font-mono text-xs" value={curlText} onChange={(e) => { setCurlText(e.target.value); setCurlPreview(null); }} placeholder={'curl https://api.openai.com/v1/responses \\\n  -H "Authorization: Bearer sk-proj-…" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"model": "gpt-5", "instructions": "…", "input": "…"}\''} />
+              </Field>
+              {curlPreview ? (
+                <div className="rounded-md border border-border p-2 text-xs">
+                  <dl className="grid grid-cols-[110px_1fr] gap-y-0.5">
+                    {Object.entries(curlPreview.summary).map(([k, v]) => (
+                      <div key={k} className="contents"><dt className="capitalize text-muted">{k.replace("_", " ")}</dt><dd className="font-mono">{v}</dd></div>
+                    ))}
+                  </dl>
+                  {curlPreview.warnings.map((w) => <p key={w} className="mt-1 text-warning">⚠ {w}</p>)}
+                </div>
+              ) : null}
+              <div className="flex gap-2">
+                <Button variant="secondary" disabled={busy || curlText.trim().length < 8} onClick={() => void guard(async () => setCurlPreview(await providersApi.parseCurl(curlText)))}>Preview</Button>
+                <Button disabled={busy || curlText.trim().length < 8 || curlPreview?.key_placeholder === true} onClick={() => void importCurl()}>{busy ? <Loader2 size={14} className="animate-spin" /> : null} Import & test</Button>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
       {step === 1 ? (
