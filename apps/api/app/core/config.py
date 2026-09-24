@@ -170,7 +170,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _serverless_defaults(self) -> Settings:
         if self.serverless and self.local_storage_path == ".data/storage":
-            self.local_storage_path = "/tmp/origin-storage"  # noqa: S108 - the only writable path on Vercel
+            self.local_storage_path = "/tmp/origin-storage"  # noqa: S108  # nosec B108 - only writable path on Vercel
         return self
 
     @model_validator(mode="after")
