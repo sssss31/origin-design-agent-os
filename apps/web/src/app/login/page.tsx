@@ -28,7 +28,11 @@ export default function LoginPage() {
       await session.login(email, password);
       router.replace("/");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not sign in");
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not reach the server. If you are running locally, make sure the API and web servers are up; on a hosted site, check API_PROXY_TARGET.",
+      );
     } finally {
       setBusy(false);
     }
