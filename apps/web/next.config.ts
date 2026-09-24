@@ -5,15 +5,19 @@ import type { NextConfig } from "next";
  * or public API URL is needed in development. Set API_PROXY_TARGET to the API origin
  * (default http://localhost:8000). Set NEXT_PUBLIC_API_BASE_URL to call the API directly.
  */
-const apiProxyTarget = process.env.API_PROXY_TARGET ?? "http://localhost:8000";
+// On Vercel there is no local API: without API_PROXY_TARGET the fallback route handler in
+// src/app/api/v1/[...path]/route.ts answers with a clear "not configured" error instead of a timeout.
+const apiProxyTarget = process.env.API_PROXY_TARGET ?? (process.env.VERCEL ? null : "http://localhost:8000");
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Docker/self-hosting wants the standalone bundle; Vercel builds its own output.
+  output: process.env.VERCEL ? undefined : "standalone",
   // Server-Sent Events must not be gzip-buffered by the Node server; compress at the edge proxy/CDN instead.
   compress: false,
   reactStrictMode: true,
   poweredByHeader: false,
   async rewrites() {
+    if (!apiProxyTarget) return [];
     return [{ source: "/api/v1/:path*", destination: `${apiProxyTarget}/api/v1/:path*` }];
   },
   async headers() {

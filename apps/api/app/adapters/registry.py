@@ -73,7 +73,7 @@ def build_secret_store(settings: Settings, session_factory: async_sessionmaker[A
 
     from app.adapters.secrets.fernet_db import FernetSecretStore
 
-    key = settings.encryption_key or _development_key(Fernet.generate_key)
+    key = settings.fernet_key or _development_key(Fernet.generate_key)
     return FernetSecretStore(key, session_factory)
 
 

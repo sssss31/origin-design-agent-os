@@ -1,0 +1,41 @@
+# Render Blueprint for the API + Postgres (the web app is deployed on Vercel, see docs/DEPLOY.md).
+# Deploy: Render dashboard → New → Blueprint → pick this repo. Fill the two "sync: false" values.
+services:
+  - type: web
+    name: origin-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: infra/deploy/api.Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SINGLE_INSTANCE          # one instance: inline queue, in-memory events, local uploads
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: origin-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY           # any long random value works; a Fernet key is derived from it
+        generateValue: true
+      - key: ALLOWED_ORIGINS          # your Vercel URL(s), comma separated
+        sync: false
+      - key: FRONTEND_URL             # same as the first ALLOWED_ORIGINS entry
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        value: admin@origin.local
+      - key: BOOTSTRAP_ADMIN_PASSWORD # ≥16 chars; only used to create the first admin — change it after login
+        sync: false
+      - key: OUTBOUND_ALLOW_HTTP
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+
+databases:
+  - name: origin-db
+    plan: basic-256mb
+    postgresMajorVersion: "17"

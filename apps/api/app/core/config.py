@@ -10,12 +10,14 @@ secrets, wildcard CORS, local storage and the inline queue are refused at startu
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
 from cryptography.fernet import Fernet
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 INSECURE_SECRETS = {"", "change-me", "replace-with-a-long-random-secret", "dev-only-not-for-production"}
@@ -59,6 +61,11 @@ class Settings(BaseSettings):
     object_storage_secret_key: str | None = None
     object_storage_region: str = "auto"
     secret_backend: Literal["fernet", "env"] = "fernet"
+    single_instance: bool = Field(
+        default=False,
+        description="Hosted on exactly one API instance (Render/Railway/Fly starter): allows the "
+        "inline queue, in-memory event bus and local storage in production.",
+    )
     queue_backend: Literal["inline", "redis"] = "inline"
     event_bus_backend: Literal["memory", "redis"] = "memory"
     workflow_scheduler: Literal["sequential", "dag"] = "sequential"
@@ -119,17 +126,41 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
     @property
+    def fernet_key(self) -> str:
+        """ENCRYPTION_KEY may be a real Fernet key or any secret of at least 32 characters (hosting
+        platforms generate random strings, not Fernet keys); the latter is derived via SHA-256."""
+        raw = self.encryption_key.strip()
+        if not raw:
+            return ""
+        try:
+            Fernet(raw.encode())
+            return raw
+        except Exception:  # noqa: BLE001 - not a Fernet key: derive one deterministically
+            return base64.urlsafe_b64encode(hashlib.sha256(raw.encode()).digest()).decode()
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalise_database_url(cls, value: str) -> str:
+        """Managed Postgres (Render, Railway, Neon…) hands out postgres:// URLs; SQLAlchemy needs
+        the psycopg driver spelled out."""
+        if value.startswith("postgres://"):
+            return "postgresql+psycopg://" + value[len("postgres://") :]
+        if value.startswith("postgresql://"):
+            return "postgresql+psycopg://" + value[len("postgresql://") :]
+        return value
+
+    @property
     def sync_database_url(self) -> str:
         """Alembic runs migrations on the async driver too; kept for tooling that needs sync."""
         return self.database_url.replace("+psycopg", "+psycopg")
 
     @model_validator(mode="after")
     def _validate_profile(self) -> Settings:
-        if self.encryption_key:
-            try:
-                Fernet(self.encryption_key.encode())
-            except Exception as exc:  # pragma: no cover - message matters, not the type
-                raise ValueError("ENCRYPTION_KEY must be a urlsafe base64 32-byte Fernet key") from exc
+        if self.encryption_key and not self.fernet_key == self.encryption_key.strip():
+            if len(self.encryption_key.strip()) < 32:
+                raise ValueError(
+                    "ENCRYPTION_KEY must be a Fernet key or a random secret of at least 32 characters"
+                )
         if not self.is_production_like:
             return self
         problems: list[str] = []
@@ -137,18 +168,25 @@ class Settings(BaseSettings):
             problems.append("JWT_SECRET must be set to a random value of at least 32 characters")
         if self.secret_backend == "fernet" and not self.encryption_key:
             problems.append("ENCRYPTION_KEY is required for the fernet secret backend")
-        if self.storage_backend == "local":
-            problems.append("STORAGE_BACKEND=local is not allowed; use s3")
-        if self.queue_backend == "inline":
-            problems.append("QUEUE_BACKEND=inline is not allowed; use redis")
-        if self.event_bus_backend == "memory":
-            problems.append("EVENT_BUS_BACKEND=memory is not allowed with multiple API replicas; use redis")
+        if not self.single_instance:
+            if self.storage_backend == "local":
+                problems.append("STORAGE_BACKEND=local is not allowed; use s3 (or SINGLE_INSTANCE=true)")
+            if self.queue_backend == "inline":
+                problems.append("QUEUE_BACKEND=inline is not allowed; use redis (or SINGLE_INSTANCE=true)")
+            if self.event_bus_backend == "memory":
+                problems.append(
+                    "EVENT_BUS_BACKEND=memory is not allowed with multiple API replicas; use redis "
+                    "(or SINGLE_INSTANCE=true)"
+                )
         if "*" in self.cors_origins:
             problems.append("ALLOWED_ORIGINS must not contain '*'")
         if self.outbound_allow_http:
             problems.append("OUTBOUND_ALLOW_HTTP must be false; custom integrations must use https")
-        if self.bootstrap_admin_password:
-            problems.append("BOOTSTRAP_ADMIN_PASSWORD must not be set; use `origin-cli bootstrap-admin`")
+        if self.bootstrap_admin_password and len(self.bootstrap_admin_password) < 16:
+            problems.append(
+                "BOOTSTRAP_ADMIN_PASSWORD must be at least 16 characters (it only creates the first "
+                "admin; change it after the first login) or unset — use `origin-cli bootstrap-admin`"
+            )
         if problems:
             raise ValueError(f"Invalid {self.app_env} configuration: " + "; ".join(problems))
         return self

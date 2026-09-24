@@ -63,3 +63,7 @@ cd apps/web && npm test && npm run build
   under `apps/api/app/adapters/` and one line in `adapters/registry.py`. See
   `docs/ARCHITECTURE.md` §3 and §7.
 - Build order and spec coverage: `docs/PLAN.md`. Phase reports: `docs/reports/`. Security review: `docs/SECURITY.md`. Operations: `docs/RUNBOOK.md`.
+
+## Deploying
+
+Web on Vercel (Root Directory `apps/web`) + API on Render (`render.yaml`): see [docs/DEPLOY.md](docs/DEPLOY.md).
