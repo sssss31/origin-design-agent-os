@@ -1,10 +1,10 @@
-# Render Blueprint for the API + Postgres (the web app is deployed on Vercel, see docs/DEPLOY.md).
-# Deploy: Render dashboard → New → Blueprint → pick this repo. Fill the two "sync: false" values.
+# Render Blueprint: the API as a FREE web service. Postgres lives on Supabase (free), the web app on Vercel.
+# Deploy: Render dashboard → New → Blueprint → pick this repo → fill the "sync: false" values (docs/DEPLOY.md).
 services:
   - type: web
     name: origin-api
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: infra/deploy/api.Dockerfile
     dockerContext: .
     healthCheckPath: /healthz
@@ -14,18 +14,16 @@ services:
         value: production
       - key: SINGLE_INSTANCE          # one instance: inline queue, in-memory events, local uploads
         value: "true"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: origin-db
-          property: connectionString
+      - key: DATABASE_URL             # Supabase → Connect → Session pooler URI (port 5432), with your DB password
+        sync: false
       - key: JWT_SECRET
         generateValue: true
-      - key: ENCRYPTION_KEY           # any long random value works; a Fernet key is derived from it
+      - key: ENCRYPTION_KEY           # any long random value works; a Fernet key is derived from it — never change it later
         generateValue: true
       - key: ALLOWED_ORIGINS          # your Vercel URL(s), comma separated
-        sync: false
-      - key: FRONTEND_URL             # same as the first ALLOWED_ORIGINS entry
-        sync: false
+        value: https://origin-design-agent-os.vercel.app
+      - key: FRONTEND_URL
+        value: https://origin-design-agent-os.vercel.app
       - key: BOOTSTRAP_ADMIN_EMAIL
         value: admin@origin.local
       - key: BOOTSTRAP_ADMIN_PASSWORD # ≥16 chars; only used to create the first admin — change it after login
@@ -34,8 +32,3 @@ services:
         value: "false"
       - key: LOG_LEVEL
         value: INFO
-
-databases:
-  - name: origin-db
-    plan: basic-256mb
-    postgresMajorVersion: "17"
