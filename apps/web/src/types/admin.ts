@@ -351,3 +351,50 @@ export interface CommandOut {
   description: string;
   is_manager: boolean;
 }
+
+/** Admin console (docs/ADMIN_CONSOLE.md) */
+export interface OverviewOut {
+  agents_total: number;
+  agents_connected: number;
+  agents_failing: number;
+  agents_without_key: number;
+  agents_disabled: number;
+  runs_24h: number;
+  runs_24h_succeeded: number;
+  runs_24h_failed: number;
+  avg_latency_ms_24h: number | null;
+  recent_failures: ActivityRunOut[];
+  default_agent_id: string | null;
+}
+
+export interface ActivityRunOut {
+  run_id: string;
+  conversation_id: string;
+  conversation_title: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  agent_command: string | null;
+  status: string;
+  user_input: string;
+  error_code: string | null;
+  error_message: string | null;
+  duration_ms: number | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface AgentMessageTestOut {
+  ok: boolean;
+  reply: string | null;
+  latency_ms: number;
+  session_native: boolean;
+  files_count: number;
+  error_code: string | null;
+  error_message: string | null;
+}
+
+export interface OrgSettingsOut {
+  organization_id: string;
+  name: string;
+  default_agent_id: string | null;
+}

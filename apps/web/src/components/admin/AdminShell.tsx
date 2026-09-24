@@ -14,31 +14,30 @@ interface NavItem {
 
 /** Spec §18 navigation. Sub-items deep-link into the parent page. */
 const NAV: NavItem[] = [
-  { href: "/admin", label: "Dashboard" },
+  { href: "/admin", label: "Overview" },
   {
     href: "/admin/agents",
     label: "Agents",
     children: [
-      { href: "/admin/agents", label: "All Agents" },
-      { href: "/admin/agents?new=1", label: "Create Agent" },
-      { href: "/admin/agents?view=versions", label: "Agent Versions" },
+      { href: "/admin/agents", label: "All agents" },
+      { href: "/admin/agents/new", label: "Add agent" },
     ],
   },
-  { href: "/admin/skills", label: "Skills", children: [{ href: "/admin/skills", label: "All Skills" }, { href: "/admin/skills?new=1", label: "Create Skill" }] },
-  { href: "/admin/tools", label: "Tools", children: [{ href: "/admin/tools", label: "All Tools" }, { href: "/admin/tools?new=1", label: "Create Tool" }] },
-  {
-    href: "/admin/integrations",
-    label: "API Integrations",
-    children: [
-      { href: "/admin/integrations#openai", label: "OpenAI" },
-      { href: "/admin/integrations#custom", label: "Custom APIs" },
-      { href: "/admin/integrations?add=1", label: "Add Integration" },
-    ],
-  },
-  { href: "/admin/usage", label: "Usage & Cost" },
+  { href: "/admin/activity", label: "Activity" },
   { href: "/admin/users", label: "Users" },
-  { href: "/admin/settings", label: "System Settings" },
-  { href: "/admin/audit", label: "Audit" },
+  { href: "/admin/settings", label: "Settings" },
+  { href: "/admin/audit", label: "Audit log" },
+  {
+    href: "/admin/skills",
+    label: "Advanced",
+    children: [
+      { href: "/admin/skills", label: "Skills" },
+      { href: "/admin/tools", label: "Tools" },
+      { href: "/admin/providers", label: "AI providers" },
+      { href: "/admin/integrations", label: "Custom integrations" },
+      { href: "/admin/usage", label: "Usage & cost" },
+    ],
+  },
 ];
 
 export function AdminShell({ title, children }: { title: string; children: React.ReactNode }) {
@@ -50,7 +49,7 @@ export function AdminShell({ title, children }: { title: string; children: React
 
   useEffect(() => {
     if (session.status === "anonymous") router.replace("/login");
-    if (session.status === "authenticated" && !session.me?.capabilities.admin_console) router.replace("/app");
+    if (session.status === "authenticated" && !session.me?.capabilities.admin_console) router.replace("/");
   }, [session, router]);
 
   if (!allowed) return <div className="flex min-h-screen items-center justify-center text-sm text-muted">Loading…</div>;
@@ -61,7 +60,12 @@ export function AdminShell({ title, children }: { title: string; children: React
         <p className="mb-3 px-2 text-sm font-semibold">Origin console</p>
         <nav className="space-y-0.5">
           {NAV.map((item) => {
-            const active = item.href === "/admin" ? pathname === item.href : pathname.startsWith(item.href);
+            const active =
+              item.href === "/admin"
+                ? pathname === item.href
+                : item.label === "Advanced"
+                  ? ["/admin/skills", "/admin/tools", "/admin/providers", "/admin/integrations", "/admin/usage"].some((h) => pathname.startsWith(h))
+                  : pathname.startsWith(item.href);
             const expanded = open[item.href] ?? active;
             return (
               <div key={item.href}>
@@ -87,7 +91,7 @@ export function AdminShell({ title, children }: { title: string; children: React
           })}
         </nav>
         <div className="mt-auto border-t border-border pt-3">
-          <Link href="/app" className="block rounded-md px-2 py-1.5 text-sm text-muted hover:bg-surface-2">← Back to app</Link>
+          <Link href="/" className="block rounded-md px-2 py-1.5 text-sm text-muted hover:bg-surface-2">← Back to chat</Link>
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">

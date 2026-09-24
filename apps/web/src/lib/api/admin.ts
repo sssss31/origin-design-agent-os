@@ -1,6 +1,6 @@
 import { API_BASE, api } from "@/lib/api/client";
 import { tokenStore } from "@/lib/token-store";
-import type {
+import type { ActivityRunOut, AgentMessageTestOut, OrgSettingsOut, OverviewOut,
   AgentImportOut,
   AgentOut,
   AgentSummaryOut,
@@ -88,6 +88,9 @@ export const agentsApi = {
   setConnection: (id: string, body: { connection_type: string; api_endpoint?: string | null; api_key?: string; config?: Record<string, unknown>; clear_api_key?: boolean }) =>
     api<AgentOut>(`${A}/agents/${id}/connection`, { method: "PUT", body }),
   testConnection: (id: string) => api<ProviderConnectionOut>(`${A}/agents/${id}/test-connection`, { method: "POST" }),
+  testMessage: (id: string, message: string) => api<AgentMessageTestOut>(`${A}/agents/${id}/test-message`, { method: "POST", body: { message } }),
+  activity: (id: string, limit = 25) => api<ActivityRunOut[]>(`${A}/activity?agent_id=${id}&limit=${limit}`),
+  remove: (id: string) => api<void>(`${A}/agents/${id}`, { method: "DELETE" }),
   seedRegistry: (connection_type: "openai_responses" | "http") => api<{ created: number; skipped: number; commands: string[] }>(`${A}/seed/agent-registry`, { method: "POST", body: { connection_type } }),
   importCurl: (body: { curl: string; name: string; command: string; description?: string; instructions?: string; publish?: boolean }) =>
     api<AgentImportOut>(`${A}/agents/import-curl`, { method: "POST", body }),
@@ -108,6 +111,20 @@ export const agentsApi = {
   addHandoff: (id: string, targetId: string, body: { routing_hint: string; is_failure_route: boolean }) =>
     api<AgentOut>(`${A}/agents/${id}/handoffs/${targetId}`, { method: "POST", body }),
   removeHandoff: (id: string, targetId: string) => api<AgentOut>(`${A}/agents/${id}/handoffs/${targetId}`, { method: "DELETE" }),
+};
+
+export const consoleApi = {
+  overview: () => api<OverviewOut>(`${A}/overview`),
+  activity: (params: { agent_id?: string; status?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.agent_id) q.set("agent_id", params.agent_id);
+    if (params.status) q.set("status", params.status);
+    if (params.limit) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return api<ActivityRunOut[]>(`${A}/activity${qs ? `?${qs}` : ""}`);
+  },
+  settings: () => api<OrgSettingsOut>(`${A}/settings`),
+  updateSettings: (body: Partial<Pick<OrgSettingsOut, "name" | "default_agent_id">>) => api<OrgSettingsOut>(`${A}/settings`, { method: "PUT", body }),
 };
 
 export const commandsApi = {

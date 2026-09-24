@@ -33,3 +33,7 @@ Everything from the earlier workspace attempt that the owner did not want (activ
 ## Still needed from the owner
 
 The real GPT agents' endpoints and keys. Two call shapes are supported out of the box: OpenAI Responses API (base URL + prompt id in Options) and a generic HTTP JSON endpoint (configurable body/response paths). Anything else needs one adapter in `app/providers/existing/`.
+
+## Addendum 2026-09-24 — Admin Console
+
+Built per `docs/ADMIN_CONSOLE.md`: `/admin` overview (connected / failing / missing-key agents, messages in 24 h, recent failures), `/admin/agents` table, `/admin/agents/new` wizard (OpenAI GPT agent · custom HTTP · paste a cURL → details & key → test message → done), `/admin/agents/{id}` with Connection / Test / Activity / Settings tabs (the old multi-tab editor lives on as "Advanced editor"), `/admin/activity` run log with agent/status filters. New endpoints: `GET /admin/overview`, `GET /admin/activity`, `POST /admin/agents/{id}/test-message`, `DELETE /admin/agents/{id}` (unused agents only). Test: `tests/api/test_admin_console.py`.

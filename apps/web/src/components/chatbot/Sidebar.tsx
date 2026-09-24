@@ -122,9 +122,9 @@ export function Sidebar({ currentId }: { currentId: string | null }) {
         {accountOpen ? (
           <div className="absolute bottom-14 left-2 right-2 z-20 rounded-lg border border-border bg-surface p-1 text-sm shadow-lg">
             <p className="truncate px-2 py-1 text-xs text-faint">{me?.email}</p>
-            {isAdmin ? <Link href="/settings/agents" onClick={() => setAccountOpen(false)} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-2"><Settings size={14} /> Agents & API keys</Link> : null}
+            {isAdmin ? <Link href="/admin/agents" onClick={() => setAccountOpen(false)} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-2"><Settings size={14} /> Agents & API keys</Link> : null}
             <button onClick={cycleTheme} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-2"><SunMoon size={14} /> Toggle theme</button>
-            {isAdmin ? <Link href="/admin" onClick={() => setAccountOpen(false)} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-2"><ShieldCheck size={14} /> Advanced console</Link> : null}
+            {isAdmin ? <Link href="/admin" onClick={() => setAccountOpen(false)} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-2"><ShieldCheck size={14} /> Admin console</Link> : null}
             <button onClick={() => void session.logout().then(() => router.replace("/login"))} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-2"><LogOut size={14} /> Sign out</button>
           </div>
         ) : null}
