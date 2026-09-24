@@ -44,3 +44,20 @@ def test_single_instance_production_profile() -> None:
         Settings(**base)
     s = Settings(single_instance=True, **base)
     assert s.queue_backend == "inline" and s.storage_backend == "local"
+
+
+def test_serverless_rejects_supabase_direct_connection() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="pooler"):
+        Settings(
+            serverless=True,
+            database_url="postgresql://postgres:pw@db.abc.supabase.co:5432/postgres",
+            _env_file=None,
+        )
+    ok = Settings(
+        serverless=True,
+        database_url="postgresql://postgres.abc:pw@aws-0-ap-south-1.pooler.supabase.com:6543/postgres",
+        _env_file=None,
+    )
+    assert ok.database_url.startswith("postgresql+psycopg://")

@@ -171,6 +171,12 @@ class Settings(BaseSettings):
     def _serverless_defaults(self) -> Settings:
         if self.serverless and self.local_storage_path == ".data/storage":
             self.local_storage_path = "/tmp/origin-storage"  # noqa: S108  # nosec B108 - only writable path on Vercel
+        if self.serverless and "@db." in self.database_url and ".supabase.co" in self.database_url:
+            raise ValueError(
+                "DATABASE_URL is Supabase's direct connection (db.<ref>.supabase.co), which is IPv6-only "
+                "and unreachable from serverless hosts. Use the Transaction pooler URI instead: "
+                "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres"
+            )
         return self
 
     @model_validator(mode="after")
