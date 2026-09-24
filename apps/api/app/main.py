@@ -14,7 +14,7 @@ from app.api.v1.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
-from app.core.middleware import RequestContextMiddleware
+from app.core.middleware import EnsureStartedMiddleware, RequestContextMiddleware
 from app.core.ratelimit import RateLimiter, RateLimitMiddleware
 from app.db.session import create_engine, create_session_factory
 
@@ -45,8 +45,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def startup(app: FastAPI) -> None:
+        """Everything the app needs before serving. Called from the ASGI lifespan, or lazily by
+        EnsureStartedMiddleware on hosts that never send lifespan events (serverless)."""
+        if settings.migrate_on_startup:
+            from app.core.migrate import migrate_to_head
+
+            await migrate_to_head(settings)
         engine = create_engine(settings)
         app.state.settings = settings
         app.state.engine = engine
@@ -55,26 +60,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from app.workers.recovery import recover_runs
         from app.workers.run_executor import RunExecutor
 
-        app.state.adapters.queue.register(
-            "run.execute", RunExecutor(app.state.session_factory, app.state.adapters, settings).handle
-        )
+        app.state.run_executor = RunExecutor(app.state.session_factory, app.state.adapters, settings)
+        app.state.adapters.queue.register("run.execute", app.state.run_executor.handle)
+        app.state.background_tasks = set()
         await recover_runs(app.state.session_factory, app.state.adapters, settings)
         await _dev_bootstrap(app, settings)
+        app.state.ready = True
         log.info(
             "startup",
             env=settings.app_env,
+            serverless=settings.serverless,
             storage=app.state.adapters.storage.name,
             queue=app.state.adapters.queue.name,
             events=app.state.adapters.events.name,
             scheduler=app.state.adapters.scheduler.name,
         )
+
+    async def shutdown(app: FastAPI) -> None:
+        drain = getattr(app.state.adapters.queue, "drain", None)
+        if drain:
+            await drain()
+        await app.state.engine.dispose()
+        app.state.ready = False
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if not getattr(app.state, "ready", False):
+            await startup(app)
         try:
             yield
         finally:
-            drain = getattr(app.state.adapters.queue, "drain", None)
-            if drain:
-                await drain()
-            await engine.dispose()
+            await shutdown(app)
 
     app = FastAPI(
         title=settings.app_name,
@@ -93,6 +109,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expose_headers=["X-Request-Id"],
     )
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(EnsureStartedMiddleware, startup=startup)
     app.add_middleware(RateLimitMiddleware, limiter=RateLimiter(settings))
     register_exception_handlers(app)
     app.include_router(root_health_router)  # /healthz, /readyz for load balancers

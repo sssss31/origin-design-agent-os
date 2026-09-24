@@ -95,6 +95,10 @@ def _development_key(generate: Callable[[], bytes]) -> str:
 
 
 def build_queue(settings: Settings) -> JobQueue:
+    if settings.serverless:
+        from app.adapters.queue.deferred import DeferredQueue
+
+        return DeferredQueue()
     if settings.queue_backend == "redis":
         from app.adapters.queue.redis_queue import RedisQueue
 

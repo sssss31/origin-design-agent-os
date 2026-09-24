@@ -8,6 +8,10 @@ on:
 jobs:
   api:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14", "3.12"]  # 3.12 = Vercel's Python runtime
     defaults:
       run: { working-directory: apps/api }
     services:
@@ -22,8 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.14" }
+        with: { python-version: "${{ matrix.python-version }}" }
       - run: pip install -e ".[dev]"
+      - name: Vercel function smoke (locked requirements import the ASGI app)
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install -r requirements.txt
+          SERVERLESS=true python -c "import api.index as m; print(type(m.app).__name__)"
       - run: ruff check . && ruff format --check .
       - run: mypy app
       - run: pytest -q

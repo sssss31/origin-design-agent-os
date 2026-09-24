@@ -6,13 +6,19 @@ from collections.abc import AsyncIterator
 
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import Settings
 
 
 def create_engine(settings: Settings) -> AsyncEngine:
     kwargs: dict[str, object] = {"echo": settings.database_echo, "pool_pre_ping": True}
-    if not settings.database_url.startswith("sqlite"):
+    if settings.serverless:
+        # One short-lived function invocation per request: no pool, and no server-side prepared
+        # statements so a transaction-mode pooler (Supabase/pgbouncer) is safe.
+        kwargs["poolclass"] = NullPool
+        kwargs["connect_args"] = {"prepare_threshold": None}
+    elif not settings.database_url.startswith("sqlite"):
         kwargs["pool_size"] = settings.database_pool_size
         kwargs["max_overflow"] = settings.database_pool_size
     return create_async_engine(settings.database_url, **kwargs)

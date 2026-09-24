@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -52,3 +53,24 @@ class RequestContextMiddleware:
             if not scope["path"].endswith(("/healthz", "/readyz")):
                 log.info("request", status=status_holder["status"], duration_ms=duration_ms)
             structlog.contextvars.clear_contextvars()
+
+
+class EnsureStartedMiddleware:
+    """Serverless hosts (Vercel Functions) may never send ASGI lifespan events; run the app's
+    startup on the first request instead, exactly once per process."""
+
+    def __init__(self, app: ASGIApp, startup: Callable[[Any], Awaitable[None]]) -> None:
+        self.app = app
+        self._startup = startup
+        self._lock: asyncio.Lock | None = None
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] in ("http", "websocket"):
+            app = scope.get("app")
+            if app is not None and not getattr(app.state, "ready", False):
+                if self._lock is None:
+                    self._lock = asyncio.Lock()
+                async with self._lock:
+                    if not getattr(app.state, "ready", False):
+                        await self._startup(app)
+        await self.app(scope, receive, send)

@@ -66,4 +66,4 @@ cd apps/web && npm test && npm run build
 
 ## Deploying
 
-Web on Vercel (Root Directory `apps/web`) + API and Postgres on Render (`render.yaml`, free plans): see [docs/DEPLOY.md](docs/DEPLOY.md).
+Everything on Vercel (web project `apps/web`, API project `apps/api` as a serverless function) + free Supabase Postgres: see [docs/DEPLOY.md](docs/DEPLOY.md). Render (`render.yaml`) remains as a Docker alternative.

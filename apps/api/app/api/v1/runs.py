@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -14,7 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.core.authz import DB, Auth, Config
 from app.core.deps import AdaptersDep
 from app.core.logging import get_logger
-from app.domain.run_state import TERMINAL_RUN_STATES
+from app.domain.run_state import TERMINAL_RUN_STATES, RunState
 from app.models.workflows import WorkflowRun
 from app.schemas.common import from_orm
 from app.schemas.runs import ClarificationAnswer, EventOut, NodeRunOut, RunCreate, RunCreated, RunOut
@@ -130,6 +131,18 @@ async def event_stream(
     )
     session_factory = request.app.state.session_factory
     bus = adapters.events
+    # Serverless hosting: nothing runs after a response is sent, so a queued run is executed here,
+    # inside the request that streams its events (the queue only recorded the intent).
+    worker: asyncio.Task[None] | None = None
+    if settings.serverless and run.status == RunState.QUEUED:
+        worker = asyncio.create_task(request.app.state.run_executor.execute(run_id))
+        request.app.state.background_tasks.add(worker)
+        worker.add_done_callback(request.app.state.background_tasks.discard)
+
+    async def settle() -> None:
+        if worker is not None and not worker.done():
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(worker), timeout=20)
 
     async def generator() -> AsyncIterator[dict]:
         last = start_after
@@ -143,6 +156,7 @@ async def event_stream(
                     if ev.type in TERMINAL_EVENTS:
                         terminal = True
             if terminal:
+                await settle()
                 return
             # 2) tail live events; heartbeats keep proxies from closing idle streams
             while not await request.is_disconnected():
@@ -169,6 +183,8 @@ async def event_stream(
                 last = wire["sequence_no"]
                 yield {"id": str(wire["sequence_no"]), "event": wire["type"], "data": json.dumps(wire)}
                 if wire["type"] in TERMINAL_EVENTS:
+                    await settle()
                     return
+            await settle()
 
     return EventSourceResponse(generator(), headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

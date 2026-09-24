@@ -70,7 +70,7 @@ async def get_current_user(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: Annotated[Settings, Depends(current_settings)],
 ) -> User:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise Unauthorized("Missing bearer token", code="missing_token")
@@ -135,4 +135,12 @@ def require_org_role(required: Role):
 CurrentUser = Annotated[User, Depends(get_current_user)]
 Auth = Annotated[AuthContext, Depends(get_auth_context)]
 DB = Annotated[AsyncSession, Depends(get_session)]
-Config = Annotated[Settings, Depends(get_settings)]
+
+
+def current_settings(request: Request) -> Settings:
+    """The settings the app was created with (create_app(settings)); falls back to the env-based
+    singleton so plain scripts keep working."""
+    return getattr(request.app.state, "settings", None) or get_settings()
+
+
+Config = Annotated[Settings, Depends(current_settings)]

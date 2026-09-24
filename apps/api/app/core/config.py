@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     object_storage_secret_key: str | None = None
     object_storage_region: str = "auto"
     secret_backend: Literal["fernet", "env"] = "fernet"
+    serverless: bool = Field(
+        default=False,
+        description="Hosted as serverless functions (Vercel): no background work after a response, "
+        "no connection pool, ephemeral disk. Runs execute inside the SSE request; migrations run "
+        "on first request under an advisory lock.",
+    )
+    auto_migrate: bool | None = Field(
+        default=None, description="Run alembic on startup. Defaults to true when SERVERLESS=true."
+    )
     single_instance: bool = Field(
         default=False,
         description="Hosted on exactly one API instance (Render/Railway/Fly starter): allows the "
@@ -126,6 +135,10 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
     @property
+    def migrate_on_startup(self) -> bool:
+        return self.serverless if self.auto_migrate is None else self.auto_migrate
+
+    @property
     def fernet_key(self) -> str:
         """ENCRYPTION_KEY may be a real Fernet key or any secret of at least 32 characters (hosting
         platforms generate random strings, not Fernet keys); the latter is derived via SHA-256."""
@@ -155,6 +168,12 @@ class Settings(BaseSettings):
         return self.database_url.replace("+psycopg", "+psycopg")
 
     @model_validator(mode="after")
+    def _serverless_defaults(self) -> Settings:
+        if self.serverless and self.local_storage_path == ".data/storage":
+            self.local_storage_path = "/tmp/origin-storage"  # noqa: S108 - the only writable path on Vercel
+        return self
+
+    @model_validator(mode="after")
     def _validate_profile(self) -> Settings:
         if self.encryption_key and not self.fernet_key == self.encryption_key.strip():
             if len(self.encryption_key.strip()) < 32:
@@ -168,7 +187,7 @@ class Settings(BaseSettings):
             problems.append("JWT_SECRET must be set to a random value of at least 32 characters")
         if self.secret_backend == "fernet" and not self.encryption_key:
             problems.append("ENCRYPTION_KEY is required for the fernet secret backend")
-        if not self.single_instance:
+        if not (self.single_instance or self.serverless):
             if self.storage_backend == "local":
                 problems.append("STORAGE_BACKEND=local is not allowed; use s3 (or SINGLE_INSTANCE=true)")
             if self.queue_backend == "inline":
