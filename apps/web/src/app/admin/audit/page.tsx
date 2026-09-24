@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -35,8 +35,8 @@ export default function AuditPage() {
             <thead className="bg-surface-2 text-left text-muted"><tr><th className="p-2">When</th><th className="p-2">Who</th><th className="p-2">Action</th><th className="p-2">Entity</th><th className="p-2">Request</th></tr></thead>
             <tbody>
               {rows.map((r) => (
-                <>
-                  <tr key={r.id} className="cursor-pointer border-t border-border hover:bg-surface-2" onClick={() => setOpen(open === r.id ? null : r.id)}>
+                <Fragment key={r.id}>
+                  <tr className="cursor-pointer border-t border-border hover:bg-surface-2" onClick={() => setOpen(open === r.id ? null : r.id)}>
                     <td className="p-2 whitespace-nowrap">{new Date(r.created_at).toLocaleString()}</td>
                     <td className="p-2">{r.actor_email ?? "system"}</td>
                     <td className="p-2 font-mono">{r.action}</td>
@@ -44,7 +44,7 @@ export default function AuditPage() {
                     <td className="p-2 text-muted">{r.request_id?.slice(0, 8)}{r.ip_address ? ` · ${r.ip_address}` : ""}</td>
                   </tr>
                   {open === r.id ? (
-                    <tr key={r.id + "-detail"} className="border-t border-border bg-surface-2">
+                    <tr className="border-t border-border bg-surface-2">
                       <td colSpan={5} className="p-2">
                         <div className="grid gap-2 md:grid-cols-2">
                           <pre className="overflow-x-auto rounded bg-surface p-2 text-[10px]">before: {JSON.stringify(r.before_json, null, 1)}</pre>
@@ -53,7 +53,7 @@ export default function AuditPage() {
                       </td>
                     </tr>
                   ) : null}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>
