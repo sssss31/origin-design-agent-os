@@ -70,3 +70,8 @@ def test_marketplace_postgres_url_is_accepted(monkeypatch) -> None:  # type: ign
     )
     s = Settings(_env_file=None)
     assert s.database_url == "postgresql+psycopg://u:p@ep-x-pooler.aws.neon.tech/neondb?sslmode=require"
+
+
+def test_database_url_whitespace_and_quotes_are_stripped() -> None:
+    s = Settings(database_url=' "postgresql://u:p@h:6543/postgres"\n', _env_file=None)
+    assert s.database_url == "postgresql+psycopg://u:p@h:6543/postgres"

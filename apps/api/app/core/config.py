@@ -160,6 +160,7 @@ class Settings(BaseSettings):
     def _normalise_database_url(cls, value: str) -> str:
         """Managed Postgres (Render, Railway, Neon…) hands out postgres:// URLs; SQLAlchemy needs
         the psycopg driver spelled out."""
+        value = value.strip().strip("'\"")  # pasted values often carry a trailing newline or quotes
         if value.startswith("postgres://"):
             value = "postgresql+psycopg://" + value[len("postgres://") :]
         elif value.startswith("postgresql://"):
