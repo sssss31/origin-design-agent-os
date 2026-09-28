@@ -6,6 +6,7 @@ thread because its env.py owns an event loop."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 
 from alembic import command
@@ -23,17 +24,22 @@ def _upgrade_sync(settings: Settings) -> None:
     import psycopg
 
     dsn = settings.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
-    with psycopg.connect(dsn, autocommit=True) as conn:
+    with psycopg.connect(dsn, autocommit=True, prepare_threshold=None) as conn:
         conn.execute("SELECT pg_advisory_lock(%s)", (LOCK_ID,))
         try:
             cfg = Config(str(API_ROOT / "alembic.ini"))
             cfg.set_main_option("script_location", str(API_ROOT / "alembic"))
             command.upgrade(cfg, "head")
         finally:
-            conn.execute("SELECT pg_advisory_unlock(%s)", (LOCK_ID,))
+            with contextlib.suppress(Exception):  # a transaction pooler may hand us another backend
+                conn.execute("SELECT pg_advisory_unlock(%s)", (LOCK_ID,))
 
 
 async def migrate_to_head(settings: Settings) -> None:
     log.info("migrations_start")
-    await asyncio.to_thread(_upgrade_sync, settings)
+    try:
+        await asyncio.to_thread(_upgrade_sync, settings)
+    except Exception as exc:
+        log.exception("migrations_failed", error=f"{type(exc).__name__}: {str(exc)[:500]}")
+        raise
     log.info("migrations_done")

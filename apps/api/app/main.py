@@ -48,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def startup(app: FastAPI) -> None:
         """Everything the app needs before serving. Called from the ASGI lifespan, or lazily by
         EnsureStartedMiddleware on hosts that never send lifespan events (serverless)."""
+        log.info("startup_begin", serverless=settings.serverless, migrate=settings.migrate_on_startup)
         if settings.migrate_on_startup:
             from app.core.migrate import migrate_to_head
 
@@ -85,6 +86,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Serverless hosts run the lifespan while importing the function: a failure there is an
+        # opaque ImportError. Start lazily on the first request instead (EnsureStartedMiddleware),
+        # where a failure is a logged 500 with the real cause.
+        if settings.serverless:
+            yield
+            return
         if not getattr(app.state, "ready", False):
             await startup(app)
         try:

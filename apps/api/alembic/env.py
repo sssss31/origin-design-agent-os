@@ -40,7 +40,11 @@ def _run_migrations(connection) -> None:  # type: ignore[no-untyped-def]
 
 async def run_migrations_online() -> None:
     engine = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+        # transaction-mode poolers (Supabase/pgbouncer) cannot keep server-side prepared statements
+        connect_args={"prepare_threshold": None},
     )
     async with engine.connect() as connection:
         await connection.run_sync(_run_migrations)
