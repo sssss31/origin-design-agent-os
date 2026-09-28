@@ -75,3 +75,13 @@ def test_marketplace_postgres_url_is_accepted(monkeypatch) -> None:  # type: ign
 def test_database_url_whitespace_and_quotes_are_stripped() -> None:
     s = Settings(database_url=' "postgresql://u:p@h:6543/postgres"\n', _env_file=None)
     assert s.database_url == "postgresql+psycopg://u:p@h:6543/postgres"
+
+
+def test_alembic_url_escaping_survives_configparser() -> None:
+    """A URL-encoded password ("%40") must round-trip through alembic's configparser-backed config."""
+    from alembic.config import Config
+
+    url = "postgresql+psycopg://postgres.ref:Pa%40ss@aws-0-x.pooler.supabase.com:6543/postgres"
+    cfg = Config()
+    cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+    assert cfg.get_main_option("sqlalchemy.url") == url
