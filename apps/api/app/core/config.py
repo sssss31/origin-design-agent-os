@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from cryptography.fernet import Fernet
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 INSECURE_SECRETS = {"", "change-me", "replace-with-a-long-random-secret", "dev-only-not-for-production"}
@@ -46,7 +46,11 @@ class Settings(BaseSettings):
     )
 
     # --- data stores -----------------------------------------------------------------
-    database_url: str = "postgresql+psycopg://origin:origin@localhost:5432/origin"
+    database_url: str = Field(
+        default="postgresql+psycopg://origin:origin@localhost:5432/origin",
+        # Vercel Marketplace databases (Neon, Supabase) inject POSTGRES_URL instead of DATABASE_URL
+        validation_alias=AliasChoices("DATABASE_URL", "POSTGRES_URL", "POSTGRES_PRISMA_URL"),
+    )
     database_pool_size: int = 10
     database_echo: bool = False
     redis_url: str | None = None
@@ -157,9 +161,13 @@ class Settings(BaseSettings):
         """Managed Postgres (Render, Railway, Neon…) hands out postgres:// URLs; SQLAlchemy needs
         the psycopg driver spelled out."""
         if value.startswith("postgres://"):
-            return "postgresql+psycopg://" + value[len("postgres://") :]
-        if value.startswith("postgresql://"):
-            return "postgresql+psycopg://" + value[len("postgresql://") :]
+            value = "postgresql+psycopg://" + value[len("postgres://") :]
+        elif value.startswith("postgresql://"):
+            value = "postgresql+psycopg://" + value[len("postgresql://") :]
+        if "?" in value:  # drop vendor-only query params libpq rejects (e.g. Supabase's supa=)
+            base, _, query = value.partition("?")
+            keep = [kv for kv in query.split("&") if kv and not kv.lower().startswith("supa=")]
+            value = base + ("?" + "&".join(keep) if keep else "")
         return value
 
     @property

@@ -61,3 +61,12 @@ def test_serverless_rejects_supabase_direct_connection() -> None:
         _env_file=None,
     )
     assert ok.database_url.startswith("postgresql+psycopg://")
+
+
+def test_marketplace_postgres_url_is_accepted(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv(
+        "POSTGRES_URL", "postgres://u:p@ep-x-pooler.aws.neon.tech/neondb?sslmode=require&supa=base-pooler.x"
+    )
+    s = Settings(_env_file=None)
+    assert s.database_url == "postgresql+psycopg://u:p@ep-x-pooler.aws.neon.tech/neondb?sslmode=require"
