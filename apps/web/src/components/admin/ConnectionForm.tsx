@@ -7,6 +7,7 @@ import type { AgentConnectionOut } from "@/types/admin";
 
 export const CONNECTION_TYPES = [
   { value: "openai_responses", label: "OpenAI GPT agent (Responses API)" },
+  { value: "chatgpt_workspace", label: "ChatGPT Workspace Agent (API trigger)" },
   { value: "http", label: "Custom HTTP endpoint (JSON)" },
 ];
 
@@ -18,7 +19,7 @@ export interface ConnectionDraft {
 }
 
 export function emptyDraft(conn?: AgentConnectionOut | null): ConnectionDraft {
-  const type = conn && conn.connection_type !== "origin" ? conn.connection_type : "openai_responses";
+  const type: string = conn && conn.connection_type !== "origin" ? conn.connection_type : "openai_responses";
   return { connection_type: type, api_endpoint: conn?.api_endpoint ?? (type === "openai_responses" ? "https://api.openai.com/v1" : ""), api_key: "", config: conn?.config ?? {} };
 }
 
@@ -44,6 +45,7 @@ function OptionInput({ draft, onChange, name, label, hint, placeholder }: { draf
 export function ConnectionForm({ draft, onChange, existing }: { draft: ConnectionDraft; onChange: (d: ConnectionDraft) => void; existing?: AgentConnectionOut | null }) {
   const [advanced, setAdvanced] = useState(false);
   const isOpenAI = draft.connection_type === "openai_responses";
+  const isWorkspace = draft.connection_type === "chatgpt_workspace";
   const looksLikeCurl = /^\s*curl\s/i.test(draft.api_key);
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -56,17 +58,22 @@ export function ConnectionForm({ draft, onChange, existing }: { draft: Connectio
         />
       </div>
       <div className="sm:col-span-2">
-        <Field label="API endpoint" hint={isOpenAI ? "Base URL. The adapter calls POST {base}/responses with your prompt id below." : "Full URL. Origin sends POST {message, session_id, conversation_id, history, files} as JSON."}>
-          <Input value={draft.api_endpoint} onChange={(e) => onChange({ ...draft, api_endpoint: e.target.value })} placeholder={isOpenAI ? "https://api.openai.com/v1" : "https://agent.example.com/chat"} />
+        <Field label={isWorkspace ? "Trigger URL" : "API endpoint"} hint={isWorkspace ? "From ChatGPT → your agent → API trigger: https://api.chatgpt.com/v1/workspace_agents/agtch_…/trigger" : isOpenAI ? "Base URL. The adapter calls POST {base}/responses with your prompt id below." : "Full URL. Origin sends POST {message, session_id, conversation_id, history, files} as JSON."}>
+          <Input value={draft.api_endpoint} onChange={(e) => onChange({ ...draft, api_endpoint: e.target.value })} placeholder={isWorkspace ? "https://api.chatgpt.com/v1/workspace_agents/agtch_…/trigger" : isOpenAI ? "https://api.openai.com/v1" : "https://agent.example.com/chat"} />
         </Field>
       </div>
       <div className="sm:col-span-2">
-        <Field label="API key" hint={existing?.configured ? `Configured · ${existing.api_key_preview} — leave empty to keep it` : "Paste the key (or a cURL — only its Bearer token is kept). Stored encrypted; never shown again."}>
+        <Field label={isWorkspace ? "Workspace Agent access token" : "API key"} hint={existing?.configured ? `Configured · ${existing.api_key_preview} — leave empty to keep it` : isWorkspace ? "ChatGPT → Admin → Access tokens → scope “Workspace Agents” (not a platform.openai.com key). Stored encrypted; never shown again." : "Paste the key (or a cURL — only its Bearer token is kept). Stored encrypted; never shown again."}>
           <Input type="password" autoComplete="off" value={draft.api_key} onChange={(e) => onChange({ ...draft, api_key: e.target.value })} placeholder={existing?.configured ? "Enter a new key to rotate" : "sk-…"} />
         </Field>
         {looksLikeCurl ? <p className="mt-1 text-xs text-warning">That looks like a cURL command — only the Bearer token will be stored.</p> : null}
       </div>
-      {isOpenAI ? (
+      {isWorkspace ? (
+        <div className="sm:col-span-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-muted">
+          ChatGPT Workspace Agents run inside ChatGPT: Origin triggers the run and follows its status, but per OpenAI’s docs the reply text is not returned by the API — it appears in the ChatGPT conversation (linked in the chat) or the agent’s configured destination.
+          <div className="mt-2"><OptionInput draft={draft} onChange={onChange} name="poll_seconds" label="Wait for completion (seconds)" hint="How long a message waits for the run to finish before showing its status" placeholder="90" /></div>
+        </div>
+      ) : isOpenAI ? (
         <>
           <OptionInput draft={draft} onChange={onChange} name="prompt_id" label="Prompt / agent id" hint="pmpt_… from the OpenAI dashboard (optional)" placeholder="pmpt_…" />
           <OptionInput draft={draft} onChange={onChange} name="model" label="Model" hint="Used when the prompt does not pin one" placeholder="gpt-4.1" />
@@ -78,7 +85,7 @@ export function ConnectionForm({ draft, onChange, existing }: { draft: Connectio
           <OptionInput draft={draft} onChange={onChange} name="api_key_header" label="Auth header" hint="Default: Authorization: Bearer <key>" placeholder="X-API-Key" />
         </>
       )}
-      <OptionInput draft={draft} onChange={onChange} name="timeout_seconds" label="Timeout (seconds)" placeholder="120" />
+      {isWorkspace ? null : <OptionInput draft={draft} onChange={onChange} name="timeout_seconds" label="Timeout (seconds)" placeholder="120" />}
       <div className="sm:col-span-2">
         <button type="button" onClick={() => setAdvanced((v) => !v)} className="text-xs text-muted underline-offset-2 hover:underline">{advanced ? "Hide" : "Show"} raw options</button>
         {advanced ? <div className="mt-2"><JsonField label={isOpenAI ? "Options (model, prompt_id, prompt_version, store, timeout_seconds)" : "Options (api_key_header, body_template, response_text_path, session_id_path, files_path, timeout_seconds)"} value={draft.config} onChange={(config) => onChange({ ...draft, config })} rows={5} /></div> : null}

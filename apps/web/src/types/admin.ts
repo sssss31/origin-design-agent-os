@@ -237,7 +237,7 @@ export interface AgentVersionInput {
 }
 
 export interface AgentConnectionOut {
-  connection_type: "origin" | "openai_responses" | "http";
+  connection_type: "origin" | "openai_responses" | "http" | "chatgpt_workspace";
   api_endpoint: string | null;
   configured: boolean;
   api_key_preview: string | null;

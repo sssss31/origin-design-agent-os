@@ -41,7 +41,7 @@ REGISTRY = [
 
 
 class RegistrySeedRequest(BaseModel):
-    connection_type: Literal["openai_responses", "http"] = "openai_responses"
+    connection_type: Literal["openai_responses", "http", "chatgpt_workspace"] = "openai_responses"
 
 
 class RegistrySeedResult(BaseModel):

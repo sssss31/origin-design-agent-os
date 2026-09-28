@@ -39,3 +39,11 @@ Chat  /resize … ──POST /runs──▶ router ──▶ gateway ──▶ E
 
 * New agent protocol: add an adapter in `app/providers/existing/` implementing `ExistingAgentProvider`, register it in `providers/existing/registry.py`, add its option form in `apps/web/src/components/admin/ConnectionForm.tsx`.
 * New console page: add a route under `apps/web/src/app/admin/` and a nav entry in `AdminShell.tsx`.
+
+## Connection types
+
+| Type | What Origin does | Reply in Origin? |
+| --- | --- | --- |
+| `openai_responses` | POST `{base}/responses` with your prompt id / model, streams the answer, keeps `previous_response_id` | Yes |
+| `http` | POST JSON `{message, session_id, conversation_id, history, files}` to your endpoint, reads the reply by path | Yes |
+| `chatgpt_workspace` | POST `…/workspace_agents/{agtch}/trigger` with `conversation_key` = the Origin chat, then polls `…/runs/{apirun}` | **No** — per OpenAI's docs the reply text is not available via API; Origin shows the run status and a link to the ChatGPT conversation. Use a Workspace Agent *access token* (ChatGPT Admin → Access tokens), not a platform API key. |

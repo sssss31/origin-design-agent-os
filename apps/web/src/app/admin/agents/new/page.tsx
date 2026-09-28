@@ -10,10 +10,11 @@ import { Field, Input, Textarea } from "@/components/ui/Input";
 import { agentsApi } from "@/lib/api/admin";
 import type { AgentMessageTestOut, AgentOut } from "@/types/admin";
 
-type Mode = "openai_responses" | "http" | "curl";
+type Mode = "openai_responses" | "chatgpt_workspace" | "http" | "curl";
 
 const MODES: { id: Mode; title: string; body: string }[] = [
-  { id: "openai_responses", title: "OpenAI GPT agent", body: "An agent built on the OpenAI platform (prompt id + API key)." },
+  { id: "openai_responses", title: "OpenAI GPT agent", body: "An agent built on the OpenAI platform (prompt id + API key). Replies stream into Origin." },
+  { id: "chatgpt_workspace", title: "ChatGPT Workspace Agent", body: "An agent built in ChatGPT (agtch_… trigger URL + access token). Origin triggers runs; the answer appears in ChatGPT." },
   { id: "http", title: "Custom HTTP endpoint", body: "Any service that answers a JSON POST with a reply." },
   { id: "curl", title: "Paste a cURL", body: "Have a working cURL from the agent's docs? Import it; Origin fills in the endpoint and key." },
 ];
@@ -22,6 +23,7 @@ const MODES: { id: Mode; title: string; body: string }[] = [
  * and the key is passed as-is (the server keeps only the Bearer token). */
 function connectionFromCurl(curl: string): { connection_type: string; api_endpoint: string } {
   const url = /https?:\/\/[^\s'"\\]+/.exec(curl)?.[0] ?? "";
+  if (/api\.chatgpt\.com\/v1\/workspace_agents\//.test(url)) return { connection_type: "chatgpt_workspace", api_endpoint: url };
   if (/api\.openai\.com/.test(url)) return { connection_type: "openai_responses", api_endpoint: url.replace(/\/responses.*$/, "") || "https://api.openai.com/v1" };
   return { connection_type: "http", api_endpoint: url };
 }
@@ -96,14 +98,14 @@ export default function NewAgentPage() {
           ))}
         </ol>
         {step === 1 ? (
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             {MODES.map((m) => (
               <button key={m.id} type="button" onClick={() => chooseMode(m.id)} className={`rounded-xl border p-4 text-left hover:border-accent ${mode === m.id ? "border-accent bg-accent-soft/40" : "border-border bg-surface"}`}>
                 <p className="text-sm font-semibold">{m.title}</p>
                 <p className="mt-1 text-xs text-muted">{m.body}</p>
               </button>
             ))}
-            <div className="sm:col-span-3 flex justify-end"><Button onClick={() => setStep(2)}>Continue</Button></div>
+            <div className="sm:col-span-2 flex justify-end"><Button onClick={() => setStep(2)}>Continue</Button></div>
           </div>
         ) : null}
         {step === 2 ? (

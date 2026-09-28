@@ -16,5 +16,5 @@ export function RunBadge({ status }: { status: string }) {
 }
 
 export function typeLabel(type: string | undefined): string {
-  return type === "openai_responses" ? "OpenAI" : type === "http" ? "HTTP" : "Origin";
+  return type === "openai_responses" ? "OpenAI" : type === "chatgpt_workspace" ? "ChatGPT agent" : type === "http" ? "HTTP" : "Origin";
 }

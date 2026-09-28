@@ -479,7 +479,7 @@ class AgentVersionOut(ORMModel):
     handoffs: list[HandoffOut] = Field(default_factory=list)
 
 
-ConnectionType = Literal["origin", "openai_responses", "http"]
+ConnectionType = Literal["origin", "openai_responses", "http", "chatgpt_workspace"]
 
 
 class AgentConnectionIn(BaseModel):
