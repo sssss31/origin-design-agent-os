@@ -33,6 +33,7 @@ async def _dev_bootstrap(app: FastAPI, settings: Settings) -> None:
                 email=settings.bootstrap_admin_email,
                 password=settings.bootstrap_admin_password,
                 organization_name=settings.bootstrap_organization_name,
+                sync_password=settings.bootstrap_admin_sync_password,
             )
             await session.commit()
             log.info("bootstrap_admin", email=settings.bootstrap_admin_email, created=created)

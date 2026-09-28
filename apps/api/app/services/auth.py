@@ -52,15 +52,22 @@ class AuthService:
         return user
 
     async def bootstrap_admin(
-        self, *, email: str, password: str, organization_name: str
+        self, *, email: str, password: str, organization_name: str, sync_password: bool = False
     ) -> tuple[User, Organization, bool]:
-        """Idempotent: creates org + admin on first run, otherwise ensures the admin membership."""
+        """Idempotent: creates org + admin on first run, otherwise ensures the admin membership.
+        With sync_password=True (BOOTSTRAP_ADMIN_SYNC_PASSWORD) an existing admin's password is
+        reset to the configured one — the recovery path on hosts without a shell."""
         email = email.strip().lower()
         user = await self.session.scalar(select(User).where(User.email == email))
         created = False
+        password_reset = False
         if user is None:
             user = await self.create_user(email=email, password=password, display_name="Administrator")
             created = True
+        elif sync_password and not verify_password(user.password_hash, password):
+            user.password_hash = hash_password(password)
+            user.is_active = True
+            password_reset = True
         slug = slugify(organization_name)
         org = await self.session.scalar(select(Organization).where(Organization.slug == slug))
         if org is None:
@@ -77,10 +84,10 @@ class AuthService:
         elif membership.role != Role.ADMIN:
             membership.role = Role.ADMIN
         await self.session.flush()
-        if created:
+        if created or password_reset:
             await audit.record(
                 self.session,
-                action="user.bootstrapped",
+                action="user.bootstrapped" if created else "user.password_reset_by_bootstrap",
                 entity_type="user",
                 entity_id=user.id,
                 organization_id=org.id,

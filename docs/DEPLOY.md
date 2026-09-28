@@ -49,6 +49,10 @@ The repo is a monorepo, so Vercel must build `apps/web`, not the repo root (a ro
 
 Framework preset stays "Next.js"; the build command is the default `next build`. `output: "standalone"` is disabled automatically on Vercel.
 
+## Forgot the admin password?
+
+Set `BOOTSTRAP_ADMIN_SYNC_PASSWORD=true` on the API project together with a new `BOOTSTRAP_ADMIN_PASSWORD`, redeploy, log in once, then set it back to `false` (or delete it) and redeploy. On start the API resets the bootstrap admin's password to the configured value only while that flag is on; the change is written to the audit log.
+
 ## 4. First login
 
 Open the Vercel URL → sign in with `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` → account menu → **Admin console → Agents** → add your GPT agents' endpoints and API keys → Test.

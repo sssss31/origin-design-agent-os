@@ -124,6 +124,11 @@ class Settings(BaseSettings):
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
     bootstrap_organization_name: str = "Origin"
+    bootstrap_admin_sync_password: bool = Field(
+        default=False,
+        description="Also reset the existing bootstrap admin's password to BOOTSTRAP_ADMIN_PASSWORD on "
+        "start (recovery on hosts without a shell). Turn it off again afterwards.",
+    )
 
     # --------------------------------------------------------------------------------
     @property
