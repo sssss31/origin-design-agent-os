@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, status
 from app.core.authz import DB, Config
 from app.schemas.auth import LoginRequest, LogoutRequest, RefreshRequest, TokenResponse
 from app.services.auth import AuthService
+from app.services.profile import profile_for_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -20,7 +21,10 @@ async def login(body: LoginRequest, request: Request, session: DB, settings: Con
         email=body.email, password=body.password, user_agent=ua, ip=ip
     )
     return TokenResponse(
-        access_token=pair.access_token, refresh_token=pair.refresh_token, expires_in=pair.expires_in
+        access_token=pair.access_token,
+        refresh_token=pair.refresh_token,
+        expires_in=pair.expires_in,
+        me=await profile_for_email(session, body.email),
     )
 
 

@@ -24,25 +24,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   // Promise-chain style on purpose: React's `set-state-in-effect` rule only allows setState
   // inside callbacks, never synchronously in the effect body.
+  const apply = useCallback((data: MeResponse) => {
+    setMe(data);
+    const stored = tokenStore.getOrganizationId();
+    const valid = data.memberships.find((m) => m.organization_id === stored)?.organization_id;
+    const chosen = valid ?? data.active_organization_id ?? data.memberships[0]?.organization_id ?? null;
+    tokenStore.setOrganizationId(chosen);
+    setOrganizationId(chosen);
+    setStatus("authenticated");
+  }, []);
+
   const load = useCallback(() => {
     const hasSession = Boolean(tokenStore.getRefreshToken() || tokenStore.getAccessToken());
     const request = hasSession ? fetchMe() : Promise.reject(new Error("anonymous"));
     return request
       .then((data) => {
-        setMe(data);
-        const stored = tokenStore.getOrganizationId();
-        const valid = data.memberships.find((m) => m.organization_id === stored)?.organization_id;
-        const chosen = valid ?? data.active_organization_id ?? data.memberships[0]?.organization_id ?? null;
-        tokenStore.setOrganizationId(chosen);
-        setOrganizationId(chosen);
-        setStatus("authenticated");
+        apply(data);
       })
       .catch(() => {
         tokenStore.clear();
         setMe(null);
         setStatus("anonymous");
       });
-  }, []);
+  }, [apply]);
 
   useEffect(() => {
     void load();
@@ -54,8 +58,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       me,
       organizationId,
       login: async (email, password) => {
-        await apiLogin(email, password);
-        await load();
+        const pair = await apiLogin(email, password);
+        if (pair.me) apply(pair.me); // one round trip instead of two
+        else await load();
       },
       logout: async () => {
         await apiLogout();
@@ -69,7 +74,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       },
       refresh: load,
     }),
-    [status, me, organizationId, load],
+    [status, me, organizationId, load, apply],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

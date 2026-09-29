@@ -59,3 +59,18 @@ async def test_admin_capability(client, make_user) -> None:  # type: ignore[no-u
 
     admin = await make_user("root@example.com", role=Role.ADMIN)
     assert (await admin.get("/api/v1/me")).json()["capabilities"]["admin_console"] is True
+
+
+async def test_login_embeds_profile(client, make_user) -> None:  # type: ignore[no-untyped-def]
+    """/login returns the /me payload so the web app skips a second round trip."""
+    await make_user("profile@example.com")
+    res = await client.post(
+        "/api/v1/auth/login", json={"email": "profile@example.com", "password": "Password123!"}
+    )
+    assert res.status_code == 200, res.text
+    me = res.json()["me"]
+    assert (
+        me["user"]["email"] == "profile@example.com"
+        and me["memberships"]
+        and "admin_console" in me["capabilities"]
+    )
