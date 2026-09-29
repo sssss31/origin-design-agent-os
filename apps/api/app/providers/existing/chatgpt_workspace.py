@@ -16,6 +16,7 @@ ChatGPT conversation link; the agent's answer lives in ChatGPT / its configured 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from typing import Any
@@ -30,6 +31,22 @@ log = get_logger("existing.chatgpt_workspace")
 DEFAULT_BASE = "https://api.chatgpt.com/v1"
 TRIGGER_RE = re.compile(r"^(?P<base>https?://[^/]+(?:/v1)?)/workspace_agents/(?P<id>agtch_[A-Za-z0-9_-]+)")
 TERMINAL = {"completed", "failed"}
+
+
+def _token_hint(conn: AgentConnection, upstream: str = "") -> str:
+    """Why ChatGPT refused the credential, in words an admin can act on (never echoes the token)."""
+    key = conn.api_key or ""
+    said = f' ChatGPT said: "{upstream}".' if upstream else ""
+    if key.startswith("sk-"):
+        return (
+            "the access token was rejected — this looks like an OpenAI Platform API key (sk-…). "
+            "Workspace Agents need a Workspace Agent access token from ChatGPT → Admin → Access tokens "
+            "(scope: Workspace Agents)." + said
+        )
+    return (
+        "the access token was rejected. Create a token in ChatGPT → Admin → Access tokens with the "
+        "“Workspace Agents” scope, in the same workspace as the agent, and paste only that token." + said
+    )
 
 
 class ChatGPTWorkspaceAgent:
@@ -86,7 +103,7 @@ class ChatGPTWorkspaceAgent:
             pass
         name = conn.agent_name
         if res.status_code == 401:
-            raise AgentCallError("agent_auth", f"{name}: the access token was rejected.")
+            raise AgentCallError("agent_auth", f"{name}: {_token_hint(conn, detail)}")
         if res.status_code == 403:
             raise AgentCallError("agent_auth", f"{name}: this token is not allowed to run the agent.")
         if res.status_code == 404:
@@ -203,8 +220,11 @@ class ChatGPTWorkspaceAgent:
             return ConnectionTest(ok=False, message="api.chatgpt.com is unreachable.")
         latency = int((time.perf_counter() - started) * 1000)
         if res.status_code == 401:
+            upstream = ""
+            with contextlib.suppress(ValueError):
+                upstream = str(res.json().get("error", {}).get("message", ""))[:200]
             return ConnectionTest(
-                ok=False, message="Authentication failed: the access token was rejected.", latency_ms=latency
+                ok=False, message="Authentication failed: " + _token_hint(conn, upstream), latency_ms=latency
             )
         if res.status_code == 403:
             return ConnectionTest(

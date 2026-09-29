@@ -125,3 +125,30 @@ async def test_errors_and_connection_test() -> None:
         agent.validate_config(_conn(endpoint="https://example.com/x"))
         and agent.validate_config(_conn(endpoint="agtch_x")) == []
     )
+
+
+async def test_rejected_token_explains_which_token_is_needed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401, json={"error": {"message": "Incorrect API key provided", "code": "invalid_api_key"}}
+        )
+
+    agent = ChatGPTWorkspaceAgent(transport=httpx.MockTransport(handler))
+
+    async def noop(_: str) -> None:
+        return None
+
+    with pytest.raises(AgentCallError) as exc:
+        await agent.send_message(
+            _conn(key="sk-proj-abcdef123456"),
+            "hi",
+            history=[],
+            files=[],
+            session_id=None,
+            conversation_id="c",
+            on_delta=noop,
+        )
+    assert "Platform API key" in exc.value.message and "sk-proj-abcdef123456" not in exc.value.message
+    res = await agent.test_connection(_conn(key="some-other-token-123"))
+    assert not res.ok and "Access tokens" in res.message and "Incorrect API key provided" in res.message
+    assert "some-other-token-123" not in res.message
