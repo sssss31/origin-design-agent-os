@@ -85,3 +85,15 @@ def test_alembic_url_escaping_survives_configparser() -> None:
     cfg = Config()
     cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
     assert cfg.get_main_option("sqlalchemy.url") == url
+
+
+def test_migration_fast_path_skips_when_at_head(migrated_db) -> None:  # type: ignore[no-untyped-def]
+    """A cold start on an up-to-date database must not run alembic (one SELECT and done)."""
+    import time
+
+    from app.core.migrate import _head_revision, _upgrade_sync
+
+    assert _head_revision()
+    started = time.perf_counter()
+    _upgrade_sync(Settings(database_url=migrated_db, _env_file=None))
+    assert time.perf_counter() - started < 1.5
