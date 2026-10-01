@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import time
+from collections.abc import AsyncIterator
+
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
 from app.core.config import get_settings
@@ -31,3 +36,20 @@ async def readyz(request: Request, response: Response) -> ReadyOut:
     ok = all(checks.values())
     response.status_code = 200 if ok else 503
     return ReadyOut(status="ready" if ok else "degraded", checks=checks)
+
+
+@router.get("/healthz/stream")
+async def healthz_stream() -> StreamingResponse:
+    """Diagnostic: six SSE ticks one second apart, so a proxy's streaming behaviour can be measured
+    (a buffering proxy delivers them all at once after ~5 s)."""
+
+    async def ticks() -> AsyncIterator[bytes]:
+        for i in range(6):
+            yield f'event: tick\ndata: {{"i": {i}, "t": {time.time():.3f}}}\n\n'.encode()
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        ticks(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
