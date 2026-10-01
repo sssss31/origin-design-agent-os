@@ -152,3 +152,46 @@ async def test_rejected_token_explains_which_token_is_needed() -> None:
     res = await agent.test_connection(_conn(key="some-other-token-123"))
     assert not res.ok and "Access tokens" in res.message and "Incorrect API key provided" in res.message
     assert "some-other-token-123" not in res.message
+
+
+async def test_token_id_is_rejected_before_calling_chatgpt() -> None:
+    """The Access tokens page lists ids (token_…); the credential itself is the at-… value shown once."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(401, json={"error": {"message": "Incorrect API key provided"}})
+
+    agent = ChatGPTWorkspaceAgent(transport=httpx.MockTransport(handler))
+    conn = _conn(key="token_X6nNabcdefaxcY")
+    problems = agent.validate_config(conn)
+    assert len(problems) == 1 and "token's ID" in problems[0] and "token_X6nN" not in problems[0]
+    res = await agent.test_connection(conn)
+    assert not res.ok and "token's ID" in res.message and calls == 0
+    assert agent.validate_config(_conn(key="at-abcdefghijklmnop")) == []
+
+
+async def test_trigger_sends_no_idempotency_key() -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.headers)
+        if request.method == "POST":
+            return httpx.Response(
+                202, json={"conversation_url": "https://chatgpt.com/c/1", "agent_trigger_run_id": "apirun_1"}
+            )
+        return httpx.Response(
+            200, json={"status": "completed", "conversation_url": "https://chatgpt.com/c/1"}
+        )
+
+    agent = ChatGPTWorkspaceAgent(transport=httpx.MockTransport(handler))
+
+    async def noop(_: str) -> None:
+        return None
+
+    await agent.send_message(
+        _conn(), "hi", history=[], files=[], session_id=None, conversation_id="c", on_delta=noop
+    )
+    assert "idempotency-key" not in {k.lower() for k in seen}
+    assert seen.get("openai-beta") == "workspace_agent_runs=v1"

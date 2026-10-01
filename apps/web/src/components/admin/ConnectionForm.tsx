@@ -23,6 +23,14 @@ export function emptyDraft(conn?: AgentConnectionOut | null): ConnectionDraft {
   return { connection_type: type, api_endpoint: conn?.api_endpoint ?? (type === "openai_responses" ? "https://api.openai.com/v1" : ""), api_key: "", config: conn?.config ?? {} };
 }
 
+/** Values that can never be a Workspace Agent access token (the API would answer 401 "Incorrect API key"). */
+export function workspaceTokenProblem(value: string): string | null {
+  const key = value.trim();
+  if (key.startsWith("token_")) return "This is the token's ID (token_…) from the Access tokens list, not the token itself. The access token is shown once when it is created and starts with “at-” — create a new one and paste that value.";
+  if (key.startsWith("sk-")) return "This is an OpenAI Platform API key (sk-…). Workspace Agents need an access token from ChatGPT → Admin → Access tokens (scope “Workspace Agents”).";
+  return null;
+}
+
 function OptionInput({ draft, onChange, name, label, hint, placeholder }: { draft: ConnectionDraft; onChange: (d: ConnectionDraft) => void; name: string; label: string; hint?: string; placeholder?: string }) {
   const value = draft.config[name];
   return (
@@ -47,6 +55,7 @@ export function ConnectionForm({ draft, onChange, existing }: { draft: Connectio
   const isOpenAI = draft.connection_type === "openai_responses";
   const isWorkspace = draft.connection_type === "chatgpt_workspace";
   const looksLikeCurl = /^\s*curl\s/i.test(draft.api_key);
+  const keyProblem = isWorkspace ? workspaceTokenProblem(draft.api_key) : null;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="sm:col-span-2">
@@ -67,6 +76,7 @@ export function ConnectionForm({ draft, onChange, existing }: { draft: Connectio
           <Input type="password" autoComplete="off" value={draft.api_key} onChange={(e) => onChange({ ...draft, api_key: e.target.value })} placeholder={existing?.configured ? "Enter a new key to rotate" : "sk-…"} />
         </Field>
         {looksLikeCurl ? <p className="mt-1 text-xs text-warning">That looks like a cURL command — only the Bearer token will be stored.</p> : null}
+        {keyProblem ? <p className="mt-1 text-xs text-danger">{keyProblem}</p> : null}
       </div>
       {isWorkspace ? (
         <div className="sm:col-span-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-muted">

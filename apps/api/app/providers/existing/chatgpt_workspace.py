@@ -33,16 +33,30 @@ TRIGGER_RE = re.compile(r"^(?P<base>https?://[^/]+(?:/v1)?)/workspace_agents/(?P
 TERMINAL = {"completed", "failed"}
 
 
+def credential_problem(key: str | None) -> str | None:
+    """A pasted value that can never be a Workspace Agent access token, explained (never echoes it)."""
+    key = (key or "").strip()
+    if key.startswith("token_"):
+        return (
+            "this is the token's ID (token_…) from the Access tokens list, not the token itself. "
+            "The access token is shown once, when it is created, and starts with “at-”. "
+            "Create a new token with the “Workspace Agents” scope and paste that value."
+        )
+    if key.startswith("sk-"):
+        return (
+            "this looks like an OpenAI Platform API key (sk-…). Workspace Agents need a Workspace Agent "
+            "access token from ChatGPT → Admin → Access tokens (scope: Workspace Agents)."
+        )
+    return None
+
+
 def _token_hint(conn: AgentConnection, upstream: str = "") -> str:
     """Why ChatGPT refused the credential, in words an admin can act on (never echoes the token)."""
     key = conn.api_key or ""
     said = f' ChatGPT said: "{upstream}".' if upstream else ""
-    if key.startswith("sk-"):
-        return (
-            "the access token was rejected — this looks like an OpenAI Platform API key (sk-…). "
-            "Workspace Agents need a Workspace Agent access token from ChatGPT → Admin → Access tokens "
-            "(scope: Workspace Agents)." + said
-        )
+    problem = credential_problem(key)
+    if problem:
+        return "the access token was rejected — " + problem + said
     return (
         "the access token was rejected. Create a token in ChatGPT → Admin → Access tokens with the "
         "“Workspace Agents” scope, in the same workspace as the agent, and paste only that token." + said
@@ -78,6 +92,8 @@ class ChatGPTWorkspaceAgent:
         problems: list[str] = []
         if not conn.api_key:
             problems.append("a Workspace Agent access token is required")
+        elif (problem := credential_problem(conn.api_key)) is not None:
+            problems.append(problem)
         try:
             self._parse(conn)
         except AgentCallError as exc:
@@ -145,10 +161,7 @@ class ChatGPTWorkspaceAgent:
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
                 res = await client.post(
                     f"{base}/workspace_agents/{agent_id}/trigger",
-                    headers={
-                        **self._headers(conn),
-                        "Idempotency-Key": f"{conversation_key}:{hash(message) & 0xFFFFFFFF}",
-                    },
+                    headers=self._headers(conn),
                     json=body,
                 )
                 self._raise_for(res, conn)

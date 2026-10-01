@@ -47,3 +47,11 @@ Chat  /resize … ──POST /runs──▶ router ──▶ gateway ──▶ E
 | `openai_responses` | POST `{base}/responses` with your prompt id / model, streams the answer, keeps `previous_response_id` | Yes |
 | `http` | POST JSON `{message, session_id, conversation_id, history, files}` to your endpoint, reads the reply by path | Yes |
 | `chatgpt_workspace` | POST `…/workspace_agents/{agtch}/trigger` with `conversation_key` = the Origin chat, then polls `…/runs/{apirun}` | **No** — per OpenAI's docs the reply text is not available via API; Origin shows the run status and a link to the ChatGPT conversation. Use a Workspace Agent *access token* (ChatGPT Admin → Access tokens), not a platform API key. |
+
+### ChatGPT Workspace Agent: which value is the token?
+
+ChatGPT → Admin → **Access tokens** lists token *ids* (`token_…`). Those are not credentials. The access token itself
+is shown **once**, when the token is created, and starts with `at-`. Origin refuses `token_…` ids and `sk-…` platform
+keys at save time (HTTP 422, nothing stored) and explains the difference inline. Saving with an empty token field keeps
+the stored token and says so ("access token unchanged"). The typed token survives switching between the Connection,
+Test and Activity tabs until it is saved.

@@ -25,6 +25,8 @@ export default function AgentDetailPage() {
   const { agentId } = useParams<{ agentId: string }>();
   const [agent, setAgent] = useState<AgentOut | null>(null);
   const [tab, setTab] = useState<Tab>("connection");
+  // the connection draft lives here so a typed key survives switching to Test/Activity and back
+  const [draft, setDraft] = useState<ConnectionDraft | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => agentsApi.get(agentId).then(setAgent).catch((e: Error) => setError(e.message)), [agentId]);
@@ -56,7 +58,7 @@ export default function AgentDetailPage() {
       {notice ? <p className="mt-2 text-xs text-success">{notice}</p> : null}
       <ErrorText>{error}</ErrorText>
       <div className="mt-3">
-        {tab === "connection" ? <ConnectionTab key={agent.connection?.connection_tested_at ?? agent.id} agent={agent} isOrigin={isOrigin} mutate={mutate} /> : null}
+        {tab === "connection" ? <ConnectionTab agent={agent} isOrigin={isOrigin} mutate={mutate} draft={draft ?? emptyDraft(agent.connection)} setDraft={setDraft} /> : null}
         {tab === "test" ? <TestTab agent={agent} onTested={load} /> : null}
         {tab === "activity" ? <ActivityTab agentId={agent.id} /> : null}
         {tab === "settings" ? <SettingsTab agent={agent} mutate={mutate} /> : null}
@@ -65,20 +67,31 @@ export default function AgentDetailPage() {
   );
 }
 
-function ConnectionTab({ agent, isOrigin, mutate }: { agent: AgentOut; isOrigin: boolean; mutate: (fn: () => Promise<AgentOut>, msg: string) => Promise<void> }) {
-  const [draft, setDraft] = useState<ConnectionDraft>(emptyDraft(agent.connection));
+function ConnectionTab({ agent, isOrigin, mutate, draft, setDraft }: { agent: AgentOut; isOrigin: boolean; mutate: (fn: () => Promise<AgentOut>, msg: string) => Promise<void>; draft: ConnectionDraft; setDraft: (d: ConnectionDraft | null) => void }) {
   const [test, setTest] = useState<ProviderConnectionOut | null>(null);
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
-  const save = async () => {
+  const keyTyped = draft.api_key.trim().length > 0;
+  /** Returns false when the server refused the change (the typed key is kept so it can be corrected). */
+  const save = async (): Promise<boolean> => {
     setBusy("save");
-    await mutate(() => agentsApi.setConnection(agent.id, { connection_type: draft.connection_type, api_endpoint: draft.api_endpoint || null, api_key: draft.api_key || undefined, config: draft.config }), "Connection saved");
-    setDraft((d) => ({ ...d, api_key: "" }));
+    const result = { saved: false };
+    const before = agent.connection?.api_key_preview ?? null;
+    await mutate(async () => {
+      const out = await agentsApi.setConnection(agent.id, { connection_type: draft.connection_type, api_endpoint: draft.api_endpoint || null, api_key: draft.api_key || undefined, config: draft.config });
+      result.saved = true;
+      return out;
+    }, keyTyped ? "Connection saved — access token updated" : agent.connection?.configured ? `Connection saved — access token unchanged (${before ?? "configured"})` : "Connection saved — no access token set yet");
     setBusy(null);
+    if (!result.saved) return false;
+    setDraft(null); // rebuild from the saved agent; the key field is write-only
+    return true;
   };
   const runTest = async () => {
     setBusy("test");
     try {
-      if (draft.api_key || draft.api_endpoint !== (agent.connection?.api_endpoint ?? "")) await save();
+      if (keyTyped || draft.api_endpoint !== (agent.connection?.api_endpoint ?? "")) {
+        if (!(await save())) return;
+      }
       setTest(await agentsApi.testConnection(agent.id));
       await mutate(() => agentsApi.get(agent.id), "Connection tested");
     } catch (err) {
@@ -93,7 +106,7 @@ function ConnectionTab({ agent, isOrigin, mutate }: { agent: AgentOut; isOrigin:
       {isOrigin ? <p className="mb-3 text-xs text-muted">This agent currently runs inside Origin (AI provider + instructions from the Advanced editor). Choose a connection type below to point it at an external GPT agent instead.</p> : null}
       <ConnectionForm draft={draft} onChange={setDraft} existing={agent.connection} />
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button disabled={busy !== null} onClick={() => void save()}>{busy === "save" ? "Saving…" : "Save"}</Button>
+        <Button disabled={busy !== null} onClick={() => void save()}>{busy === "save" ? "Saving…" : keyTyped ? "Save new token" : "Save"}</Button>
         <Button variant="secondary" disabled={busy !== null} onClick={() => void runTest()}>{busy === "test" ? "Testing…" : "Test connection"}</Button>
         {test ? <span className={`text-xs ${test.success ? "text-success" : "text-danger"}`}>{test.success ? "🟢" : "🔴"} {test.message} ({test.latency_ms} ms)</span> : null}
       </div>

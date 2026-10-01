@@ -69,6 +69,42 @@ async def test_v0_definition_of_done(app, client, make_user, monkeypatch) -> Non
         and resize["connection"]["api_key_preview"].endswith("7890")
         and "resize-key" not in res.text
     )
+    # a ChatGPT Workspace agent never stores a token *id* (token_…) or a platform key: 422, key unchanged
+    trigger = "https://api.chatgpt.com/v1/workspace_agents/agtch_abc123/trigger"
+    for bad in ("token_X6nNabcdefaxcY", "sk-proj-abcdef123456"):
+        res = await admin.put(
+            f"{ADMIN}/agents/{agents['/resize']['id']}/connection",
+            json={
+                "connection_type": "chatgpt_workspace",
+                "api_endpoint": trigger,
+                "api_key": bad,
+                "config": {},
+            },
+        )
+        assert res.status_code == 422 and res.json()["error"]["code"] == "invalid_api_key", res.text
+        assert bad not in res.text
+    after = (await admin.get(f"{ADMIN}/agents/{agents['/resize']['id']}")).json()["connection"]
+    assert after["api_key_preview"].endswith("7890") and after["connection_type"] == "http"
+    res = await admin.put(
+        f"{ADMIN}/agents/{agents['/resize']['id']}/connection",
+        json={
+            "connection_type": "chatgpt_workspace",
+            "api_endpoint": trigger,
+            "api_key": "at-abcdefghijklmnop",
+            "config": {},
+        },
+    )
+    assert res.status_code == 200 and res.json()["connection"]["api_key_preview"].endswith("mnop")
+    res = await admin.put(
+        f"{ADMIN}/agents/{agents['/resize']['id']}/connection",
+        json={
+            "connection_type": "http",
+            "api_endpoint": "https://agents.example.com/resize/run",
+            "api_key": "resize-key-ABCDEF7890",
+            "config": {"response_text_path": "reply"},
+        },
+    )
+    assert res.status_code == 200
     res = await admin.put(
         f"{ADMIN}/agents/{agents['/qc']['id']}/connection",
         json={

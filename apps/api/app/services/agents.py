@@ -836,6 +836,14 @@ async def set_agent_connection(
         agent.api_key_preview = None
     if data.api_key:
         value = ProviderService.normalize_key(data.api_key)
+        if data.connection_type == "chatgpt_workspace":
+            from app.providers.existing.chatgpt_workspace import credential_problem
+
+            # refuse values that can never work (token ids, platform keys) instead of storing them
+            if (problem := credential_problem(value)) is not None:
+                raise ValidationFailed(
+                    f"Not a Workspace Agent access token: {problem}", code="invalid_api_key"
+                )
         if agent.api_key_secret_ref_id:
             handle = await adapters.secrets.rotate(str(agent.api_key_secret_ref_id), value)
         else:
