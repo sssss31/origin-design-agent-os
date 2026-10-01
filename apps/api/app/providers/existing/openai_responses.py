@@ -6,6 +6,10 @@ Contract used (https://platform.openai.com/docs/api-reference/responses):
 - SSE events: `response.output_text.delta` (text chunks), `response.completed` (final object
   with `id`, `output[]`, `usage`), `error` / `response.failed`.
 - Files: images as `input_image` (data URL), PDFs as `input_file` (`file_data` data URL).
+- Images out: the built-in `image_generation` tool (on by default, `image_generation: false` turns it
+  off); `partial_images` makes the stream carry `response.image_generation_call.partial_image`
+  events (`partial_image_b64`, `partial_image_index`, `item_id`) so the UI can show the render as it
+  forms; the finished image is `image_generation_call.result` on the completed response.
 Nothing else is assumed. No extra system prompt is injected (V0 §8).
 """
 
@@ -22,7 +26,14 @@ import httpx
 from app.core.logging import get_logger, redact
 from app.ports.runner import ProducedFile
 from app.providers.base import ConnectionTest
-from app.providers.existing.base import AgentCallError, AgentConnection, AgentFile, AgentReply, OnDelta
+from app.providers.existing.base import (
+    AgentCallError,
+    AgentConnection,
+    AgentFile,
+    AgentReply,
+    OnDelta,
+    OnPreview,
+)
 
 log = get_logger("existing.openai")
 DEFAULT_BASE = "https://api.openai.com/v1"
@@ -135,6 +146,19 @@ class OpenAIResponsesAgent:
         ):
             if key in cfg and cfg[key] is not None:
                 body[key] = cfg[key]
+        tools = list(body.get("tools") or [])
+        if cfg.get("image_generation", True) and not any(
+            isinstance(t, dict) and t.get("type") == "image_generation" for t in tools
+        ):
+            tool: dict[str, Any] = {
+                "type": "image_generation",
+                "partial_images": int(cfg.get("partial_images", 2)),
+            }
+            if isinstance(cfg.get("image_options"), dict):
+                tool.update(cfg["image_options"])  # size, quality, output_format, background, …
+            tools.append(tool)
+        if tools:
+            body["tools"] = tools
         return body, warnings
 
     # ------------------------------------------------------------------ calls
@@ -148,6 +172,7 @@ class OpenAIResponsesAgent:
         session_id: str | None,
         conversation_id: str,
         on_delta: OnDelta,
+        on_preview: OnPreview | None = None,
     ) -> AgentReply:
         if not conn.api_key:
             raise AgentCallError("agent_not_configured", f"{conn.agent_name} has no API key configured.")
@@ -160,6 +185,7 @@ class OpenAIResponsesAgent:
         }
         text_parts: list[str] = []
         final: dict[str, Any] | None = None
+        image_started = False
         started = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
@@ -182,6 +208,25 @@ class OpenAIResponsesAgent:
                             delta = str(event.get("delta", ""))
                             text_parts.append(delta)
                             await on_delta(delta)
+                        elif etype == "response.image_generation_call.generating" and not image_started:
+                            image_started = True
+                            await on_delta("Generating image…\n")
+                        elif etype == "response.image_generation_call.partial_image" and on_preview:
+                            b64 = str(event.get("partial_image_b64") or "")
+                            if b64:
+                                await on_preview(
+                                    ProducedFile(
+                                        filename=f"{conn.agent_slug}-preview.png",
+                                        content=base64.b64decode(b64),
+                                        mime_type="image/png",
+                                        artifact_type="image",
+                                        metadata={
+                                            "partial": True,
+                                            "index": int(event.get("partial_image_index", 0) or 0),
+                                            "item_id": str(event.get("item_id") or ""),
+                                        },
+                                    )
+                                )
                         elif etype in ("response.completed", "response.incomplete"):
                             final = event.get("response") or {}
                         elif etype in ("response.failed", "error"):
@@ -229,13 +274,20 @@ class OpenAIResponsesAgent:
                                 text += str(c.get("text", ""))
             for item in final.get("output") or []:
                 if item.get("type") == "image_generation_call" and item.get("result"):
+                    fmt = str(item.get("output_format") or "png").lower()
+                    ext = "jpg" if fmt == "jpeg" else fmt
                     produced.append(
                         ProducedFile(
-                            filename=f"{conn.agent_slug}-{uuid.uuid4().hex[:8]}.png",
+                            filename=f"{conn.agent_slug}-{uuid.uuid4().hex[:8]}.{ext}",
                             content=base64.b64decode(item["result"]),
-                            mime_type="image/png",
+                            mime_type=f"image/{fmt}",
                             artifact_type="image",
-                            metadata={"agent": conn.agent_slug, "source": "image_generation_call"},
+                            metadata={
+                                "agent": conn.agent_slug,
+                                "source": "image_generation_call",
+                                "item_id": str(item.get("id") or ""),
+                                "revised_prompt": str(item.get("revised_prompt") or "")[:2000],
+                            },
                         )
                     )
         if warnings:

@@ -9,6 +9,7 @@
         "tool.started",
         "tool.completed",
         "artifact.created",
+        "artifact.preview",
         "clarification.requested",
         "clarification.received",
         "node.completed",
@@ -290,6 +291,19 @@
           ],
           "default": null,
           "title": "Output Summary"
+        },
+        "preview_url": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preview Url"
         },
         "qc_passed": {
           "anyOf": [

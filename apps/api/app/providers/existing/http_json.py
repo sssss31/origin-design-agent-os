@@ -25,7 +25,14 @@ from app.core.ssrf import OutboundBlocked, validate_outbound_url
 from app.domain.templates import render, render_mapping
 from app.ports.runner import ProducedFile
 from app.providers.base import ConnectionTest
-from app.providers.existing.base import AgentCallError, AgentConnection, AgentFile, AgentReply, OnDelta
+from app.providers.existing.base import (
+    AgentCallError,
+    AgentConnection,
+    AgentFile,
+    AgentReply,
+    OnDelta,
+    OnPreview,
+)
 
 log = get_logger("existing.http")
 DEFAULT_BODY = (
@@ -143,6 +150,7 @@ class HttpJsonAgent:
         session_id: str | None,
         conversation_id: str,
         on_delta: OnDelta,
+        on_preview: OnPreview | None = None,
     ) -> AgentReply:
         problems = self.validate_config(conn)
         if problems:

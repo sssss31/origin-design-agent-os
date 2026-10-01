@@ -21,6 +21,7 @@ export const EVENT_TYPES = [
   "tool.started",
   "tool.completed",
   "artifact.created",
+  "artifact.preview",
   "clarification.requested",
   "clarification.received",
   "node.completed",
@@ -58,6 +59,7 @@ export interface SafeEventPayload {
   duration_ms?: number | null;
   findings_count?: number | null;
   qc_passed?: boolean | null;
+  preview_url?: string | null;
   delta?: string | null;
   session_native?: boolean | null;
   files_count?: number | null;

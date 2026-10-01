@@ -87,6 +87,7 @@ export function ConnectionForm({ draft, onChange, existing }: { draft: Connectio
         <>
           <OptionInput draft={draft} onChange={onChange} name="prompt_id" label="Prompt / agent id" hint="pmpt_… from the OpenAI dashboard (optional)" placeholder="pmpt_…" />
           <OptionInput draft={draft} onChange={onChange} name="model" label="Model" hint="Used when the prompt does not pin one" placeholder="gpt-4.1" />
+          <p className="sm:col-span-2 text-xs text-muted">Images: attached images are sent to the model; the built-in <code>image_generation</code> tool is on, and renders stream into the chat as they form (GPT-style). Raw options: <code>image_generation: false</code> to turn it off, <code>image_options</code> for size/quality/output_format, <code>partial_images</code> (default 2).</p>
         </>
       ) : (
         <>

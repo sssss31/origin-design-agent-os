@@ -2,24 +2,31 @@
 
 import { Check, ChevronDown, Copy, Paperclip, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ArtifactCard } from "@/components/chatbot/ArtifactCard";
+import { ArtifactCard, AttachmentThumb, PreviewImage } from "@/components/chatbot/ArtifactCard";
 import { Markdown } from "@/components/chatbot/Markdown";
 import type { PendingMessage } from "@/components/chatbot/useConversation";
 import { splitCommand } from "@/lib/slash";
 import type { Timeline } from "@/lib/timeline";
-import type { MessageOut } from "@/types/chat";
+import type { AttachmentOut, MessageOut } from "@/types/chat";
 
-function UserBubble({ content, files, faded }: { content: string; files: string[]; faded?: boolean }) {
+function UserBubble({ content, attachments, previews, faded }: { content: string; attachments: AttachmentOut[]; previews?: string[]; faded?: boolean }) {
   const { command, body } = splitCommand(content);
+  const images = attachments.filter((a) => /^image\//.test(a.mime_type ?? "") || (!a.asset_id && previews?.length));
+  const others = attachments.filter((a) => !images.includes(a));
   return (
     <div className="flex justify-end">
       <div className={`max-w-[80%] rounded-2xl bg-surface-2 px-4 py-2.5 text-[15px] leading-6 ${faded ? "opacity-70" : ""}`}>
         {command ? <span className="mr-2 inline-block rounded-md bg-accent-soft px-1.5 py-0.5 align-middle font-mono text-xs text-accent">{command}</span> : null}
         <span className="whitespace-pre-wrap">{body || (command ? "" : content)}</span>
-        {files.length ? (
+        {images.length ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {images.map((a, i) => <AttachmentThumb key={a.asset_id ?? i} attachment={a} localUrl={previews?.[i] ?? null} />)}
+          </div>
+        ) : null}
+        {others.length ? (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {files.map((f, i) => (
-              <span key={i} className="flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-muted"><Paperclip size={10} /> {f}</span>
+            {others.map((a, i) => (
+              <span key={a.asset_id ?? i} className="flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-muted"><Paperclip size={10} /> {a.name ?? "file"}</span>
             ))}
           </div>
         ) : null}
@@ -130,8 +137,11 @@ export function Thread({
     bottom.current?.scrollIntoView({ block: "end" });
   }, [messages.length, pending, streamText, busy, error]);
   // provider status lines (e.g. "Status: in_progress") are short single lines; real answers are longer markdown
-  const providerLines = streamText.split("\n").map((l) => l.trim()).filter((l) => l && l.length < 120 && /^(Triggered|Status:|Connecting|Waiting|Processing)/.test(l));
+  const providerLines = streamText.split("\n").map((l) => l.trim()).filter((l) => l && l.length < 120 && /^(Triggered|Status:|Connecting|Waiting|Processing|Generating)/.test(l));
   const answerText = providerLines.length && streamText.trim().split("\n").every((l) => providerLines.includes(l.trim()) || !l.trim()) ? "" : streamText;
+  // the finished run's steps stay with its reply, collapsed ("Completed in 4.2s"), like a worked log
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  const doneProcess = !busy && timeline?.terminal && timeline.nodes.length ? timeline : null;
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6">
@@ -139,12 +149,13 @@ export function Thread({
           m.role === "system" ? (
             <SystemEvent key={m.id} message={m} />
           ) : m.role === "user" ? (
-            <UserBubble key={m.id} content={m.content} files={m.attachments.map((a) => a.name ?? "file")} />
+            <UserBubble key={m.id} content={m.content} attachments={m.attachments} />
           ) : (
             <div key={m.id} className="flex gap-3">
               <Avatar name={m.agent_name ?? "A"} />
               <div className="min-w-0 flex-1">
                 <p className="mb-1 text-xs font-medium text-muted">{m.agent_name ?? "Agent"} {m.agent_command ? <span className="font-mono text-accent">{m.agent_command}</span> : null}</p>
+                {doneProcess && m.id === lastAssistant?.id ? <div className="mb-2"><Process timeline={doneProcess} agentName={m.agent_name ?? agentName} providerLines={[]} running={false} /></div> : null}
                 <Markdown text={m.content} />
                 {m.attachments.filter((a) => a.artifact_id).map((a) => <ArtifactCard key={a.artifact_id} attachment={a} />)}
                 <div className="mt-1 flex items-center gap-1">
@@ -154,12 +165,13 @@ export function Thread({
             </div>
           ),
         )}
-        {pending ? <UserBubble content={pending.content} files={pending.files} faded /> : null}
+        {pending ? <UserBubble content={pending.content} attachments={pending.files.map((name) => ({ name }))} previews={pending.previews} faded /> : null}
         {busy || streamText ? (
           <div className="flex gap-3">
             <Avatar name={agentName} />
             <div className="min-w-0 flex-1 space-y-2">
               <Process timeline={timeline} agentName={agentName} providerLines={providerLines} running={busy} />
+              {timeline?.previews.map((p) => <PreviewImage key={p.item} url={p.url} final={p.final} />)}
               {answerText ? (
                 <div className="stream">
                   <Markdown text={answerText} />

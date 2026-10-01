@@ -27,7 +27,14 @@ from app.models.chat import AgentSession, Message
 from app.models.files import Artifact, Asset
 from app.ports.storage import ObjectStorage
 from app.providers.base import ConnectionTest
-from app.providers.existing.base import AgentCallError, AgentConnection, AgentFile, AgentReply, OnDelta
+from app.providers.existing.base import (
+    AgentCallError,
+    AgentConnection,
+    AgentFile,
+    AgentReply,
+    OnDelta,
+    OnPreview,
+)
 from app.providers.existing.registry import build_existing_providers
 
 HISTORY_LIMIT = 12  # bounded Origin-side context when the agent has no native session (§11)
@@ -159,6 +166,7 @@ async def call_agent(
     adapters: Adapters,
     settings: Settings,
     on_delta: OnDelta,
+    on_preview: OnPreview | None = None,
     transport: Any = None,
 ) -> AgentReply:
     providers = build_existing_providers(settings, transport=transport)
@@ -175,6 +183,7 @@ async def call_agent(
             session_id=context.session_id,
             conversation_id=str(conversation_id),
             on_delta=on_delta,
+            on_preview=on_preview,
         )
     except AgentCallError as exc:
         if exc.code == "agent_session_lost" and context.session_id:
@@ -189,6 +198,7 @@ async def call_agent(
                 session_id=None,
                 conversation_id=str(conversation_id),
                 on_delta=on_delta,
+                on_preview=on_preview,
             )
         raise
 

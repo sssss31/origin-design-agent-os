@@ -21,6 +21,7 @@ class EventType(StrEnum):
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"
     ARTIFACT_CREATED = "artifact.created"
+    ARTIFACT_PREVIEW = "artifact.preview"  # an in-progress image from the provider (partial render)
     CLARIFICATION_REQUESTED = "clarification.requested"
     CLARIFICATION_RECEIVED = "clarification.received"
     NODE_COMPLETED = "node.completed"
@@ -70,6 +71,7 @@ class SafeEventPayload(BaseModel):
     session_native: bool | None = None
     files_count: int | None = None
     history_messages: int | None = None
+    preview_url: str | None = Field(default=None, max_length=2000)  # signed, short-lived
 
 
 class ExecutionEvent(BaseModel):

@@ -253,3 +253,98 @@ async def test_http_json_agent_accepts_an_object_body_template(monkeypatch: pyte
         {"role": "user", "content": "hi"}
     ]
     assert reply.text == "ok" and len(reply.files) == 1 and reply.files[0].filename == "card.png"
+
+
+async def test_openai_responses_streams_partial_images_and_enables_the_image_tool() -> None:
+    """GPT-style image generation: the tool is on by default, partial renders reach on_preview, the final
+    image (with its output format) is the produced file."""
+    seen: dict[str, Any] = {}
+    png_b64 = "iVBORw0KGgo="
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        events = [
+            {"type": "response.created", "response": {"id": "resp_9"}},
+            {"type": "response.image_generation_call.in_progress", "item_id": "ig_1"},
+            {"type": "response.image_generation_call.generating", "item_id": "ig_1"},
+            {
+                "type": "response.image_generation_call.partial_image",
+                "item_id": "ig_1",
+                "partial_image_index": 0,
+                "partial_image_b64": png_b64,
+            },
+            {
+                "type": "response.image_generation_call.partial_image",
+                "item_id": "ig_1",
+                "partial_image_index": 1,
+                "partial_image_b64": png_b64,
+            },
+            {"type": "response.output_text.delta", "delta": "Here is the 4:5 version."},
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_9",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                    "output": [
+                        {
+                            "type": "image_generation_call",
+                            "id": "ig_1",
+                            "result": png_b64,
+                            "output_format": "jpeg",
+                            "revised_prompt": "poster, 4:5",
+                        },
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "Here is the 4:5 version."}],
+                        },
+                    ],
+                },
+            },
+        ]
+        return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+
+    provider = OpenAIResponsesAgent(transport=httpx.MockTransport(handler))
+    conn = AgentConnection("resize", "Resize", "openai_responses", None, "sk-test", {"model": "gpt-5"})
+    deltas: list[str] = []
+    previews: list[Any] = []
+
+    async def on_preview(file: Any) -> None:
+        previews.append(file)
+
+    reply = await provider.send_message(
+        conn,
+        "make it 4:5",
+        history=[],
+        files=[AgentFile("poster.png", "image/png", b"\x89PNG")],
+        session_id=None,
+        conversation_id="c",
+        on_delta=await _collect(deltas),
+        on_preview=on_preview,
+    )
+    tools = seen["body"]["tools"]
+    assert tools == [{"type": "image_generation", "partial_images": 2}]
+    assert seen["body"]["input"][-1]["content"][1]["type"] == "input_image"
+    assert "Generating image…\n" in deltas and deltas.count("Generating image…\n") == 1
+    assert [p.metadata["index"] for p in previews] == [0, 1] and previews[0].metadata["item_id"] == "ig_1"
+    assert previews[0].metadata["partial"] is True and previews[0].mime_type == "image/png"
+    assert len(reply.files) == 1 and reply.files[0].mime_type == "image/jpeg"
+    assert (
+        reply.files[0].filename.endswith(".jpg")
+        and reply.files[0].metadata["revised_prompt"] == "poster, 4:5"
+    )
+    assert reply.text == "Here is the 4:5 version."
+
+    # opt out, and custom image options merge into the tool
+    conn.config = {"model": "gpt-5", "image_generation": False}
+    provider._body(conn, "x", history=[], files=[], session_id=None)
+    body, _ = provider._body(conn, "x", history=[], files=[], session_id=None)
+    assert "tools" not in body
+    conn.config = {
+        "model": "gpt-5",
+        "image_options": {"size": "1024x1536", "quality": "high"},
+        "partial_images": 3,
+    }
+    body, _ = provider._body(conn, "x", history=[], files=[], session_id=None)
+    assert body["tools"] == [
+        {"type": "image_generation", "partial_images": 3, "size": "1024x1536", "quality": "high"}
+    ]

@@ -17,6 +17,8 @@ const POLL_MS = 2000;
 export interface PendingMessage {
   content: string;
   files: string[];
+  /** object URLs for attached images, shown as thumbnails until the server copy is loaded */
+  previews: string[];
 }
 
 /** Readable text for an API failure (brief §21). */
@@ -71,7 +73,17 @@ export function useConversation(conversationId: string | null) {
     setPending(null);
     setLoaded(true);
     setLoadError(null);
+    return m;
   }, [conversationId]);
+
+  /** After a run ends the reply is committed by the worker; a read that races it is retried briefly. */
+  const refreshUntilReply = useCallback(async () => {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const m = await refresh();
+      if (!m || m[m.length - 1]?.role === "assistant") return;
+      await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+    }
+  }, [refresh]);
 
   // initial load + refresh recovery (brief §15): re-attach to a run that is still going
   useEffect(() => {
@@ -85,10 +97,12 @@ export function useConversation(conversationId: string | null) {
         if (!TERMINAL.has(latest.status)) {
           setRunId(latest.id);
           setActive(true);
-        } else if (latest.status === "FAILED") {
-          setRunId(latest.id);
-          setError(latest.error_json?.message ?? "The agent could not complete the request. Retry.");
+          return;
         }
+        setRunId(latest.id);
+        if (latest.status === "FAILED") setError(latest.error_json?.message ?? "The agent could not complete the request. Retry.");
+        // the finished run's steps stay visible ("Completed in 4.2s") exactly as they were recorded
+        return runsApi.history(latest.id, 0).then((history) => setEvents(history)).catch(() => undefined);
       })
       .catch((err: unknown) => {
         setLoaded(true);
@@ -124,7 +138,7 @@ export function useConversation(conversationId: string | null) {
             if (run.status === "FAILED") setError(run.error_json?.message ?? "The agent could not complete the request. Retry.");
             setActive(false);
             setStreamText("");
-            void refresh();
+            void refreshUntilReply();
             window.dispatchEvent(new Event(CHATS_CHANGED));
           })
           .catch(() => undefined);
@@ -143,7 +157,7 @@ export function useConversation(conversationId: string | null) {
             setActive(false);
             setStreamText("");
             if (run.status === "FAILED") setError(run.error_json?.message ?? "The agent run was interrupted. Retry.");
-            await refresh();
+            await refreshUntilReply();
             return;
           }
         }
@@ -165,13 +179,17 @@ export function useConversation(conversationId: string | null) {
       sse.current?.close();
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
-  }, [runId, runKey, active, refresh]);
+  }, [runId, runKey, active, refresh, refreshUntilReply]);
 
   const timeline = useMemo(() => (events.length ? deriveTimeline(events) : null), [events]);
 
   /** Create the conversation lazily (home screen) and return its id. */
   const ensureConversation = async (): Promise<{ id: string; projectId: string | null; created: boolean }> => {
-    if (conversationId) return { id: conversationId, projectId: conversation?.project_id ?? null, created: false };
+    if (conversationId) {
+      // right after navigating here the conversation may not be loaded yet; uploads need its project
+      const projectId = conversation?.project_id ?? (await conversationsApi.get(conversationId)).project_id ?? null;
+      return { id: conversationId, projectId, created: false };
+    }
     const lib = await api<LibraryOut>("/library?limit=1");
     const projectId = lib.projects[0]?.id ?? null;
     if (projectId) {
@@ -186,7 +204,7 @@ export function useConversation(conversationId: string | null) {
     setError(null);
     try {
       const target = await ensureConversation();
-      setPending({ content, files: files.map((f) => f.name) });
+      setPending({ content, files: files.map((f) => f.name), previews: files.filter((f) => f.type.startsWith("image/")).map((f) => URL.createObjectURL(f)) });
       const assetIds: string[] = [];
       for (const f of files) assetIds.push((await assetsApi.upload(target.projectId as string, f)).id);
       const created = await runsApi.create(target.id, { content, selected_asset_ids: assetIds });

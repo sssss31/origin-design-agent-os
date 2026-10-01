@@ -2,8 +2,48 @@
 
 import { Download, ExternalLink, FileText } from "lucide-react";
 import { useEffect, useState } from "react";
-import { artifactsApi } from "@/lib/api/chat";
+import { artifactsApi, assetsApi, resolveDownloadUrl } from "@/lib/api/chat";
 import type { AttachmentOut } from "@/types/chat";
+
+const IMAGE_RE = /^image\/(png|jpe?g|webp|gif|svg\+xml)$/;
+
+/**
+ * What the user attached: images as a thumbnail (signed, short-lived URL), anything else as a chip.
+ * `localUrl` is the browser's own copy, shown until the server copy is known.
+ */
+export function AttachmentThumb({ attachment, localUrl }: { attachment: AttachmentOut; localUrl?: string | null }) {
+  const [url, setUrl] = useState<string | null>(localUrl ?? null);
+  const id = attachment.asset_id;
+  const isImage = IMAGE_RE.test(attachment.mime_type ?? "");
+  useEffect(() => {
+    if (!id || !isImage) return;
+    assetsApi
+      .download(id)
+      .then((d) => setUrl(resolveDownloadUrl(d.url)))
+      .catch(() => undefined);
+  }, [id, isImage]);
+  const name = attachment.name ?? "file";
+  if ((isImage || localUrl) && url) {
+    return (
+      <a href={url} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-lg border border-border bg-surface" title={name}>
+        {/* eslint-disable-next-line @next/next/no-img-element -- signed, short-lived URLs from the API */}
+        <img src={url} alt={name} className="block max-h-48 max-w-[240px] object-cover" />
+      </a>
+    );
+  }
+  return <span className="flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-muted"><FileText size={10} /> {name}</span>;
+}
+
+/** An image the agent is still rendering: the latest partial frame, dimmed until the final arrives. */
+export function PreviewImage({ url, final }: { url: string; final: boolean }) {
+  return (
+    <div className="relative mt-2 max-w-md overflow-hidden rounded-xl border border-border bg-surface-2">
+      {/* eslint-disable-next-line @next/next/no-img-element -- signed, short-lived URLs from the API */}
+      <img src={url} alt="Image being generated" className={`block max-h-96 w-full object-contain transition-opacity duration-500 ${final ? "opacity-100" : "opacity-80"}`} />
+      {!final ? <span className="absolute bottom-2 left-2 flex items-center gap-1.5 rounded-full bg-bg/80 px-2 py-0.5 text-[11px] text-muted"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" /> Generating image…</span> : null}
+    </div>
+  );
+}
 
 function formatSize(bytes?: number | null): string {
   if (!bytes) return "";
@@ -33,7 +73,7 @@ export function ArtifactCard({ attachment }: { attachment: AttachmentOut }) {
       })
       .catch(() => setFailed(true));
   }, [id]);
-  const isImage = /^image\/(png|jpe?g|webp|gif|svg\+xml)$/.test(mime);
+  const isImage = IMAGE_RE.test(mime);
   if (failed) return <p className="text-xs text-danger">Could not load {name}.</p>;
   return (
     <div className="mt-2 max-w-md overflow-hidden rounded-xl border border-border bg-surface">

@@ -38,6 +38,8 @@ class AgentReply:
 
 
 OnDelta = Callable[[str], Awaitable[None]]
+# an in-progress render (e.g. an OpenAI partial image); the final file still arrives in AgentReply.files
+OnPreview = Callable[[ProducedFile], Awaitable[None]]
 
 
 class AgentCallError(Exception):
@@ -66,6 +68,7 @@ class ExistingAgentProvider(Protocol):
         session_id: str | None,
         conversation_id: str,
         on_delta: OnDelta,
+        on_preview: OnPreview | None = None,
     ) -> AgentReply: ...
 
     async def test_connection(self, conn: AgentConnection) -> ConnectionTest: ...

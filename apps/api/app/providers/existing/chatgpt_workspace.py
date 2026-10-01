@@ -25,7 +25,14 @@ import httpx
 
 from app.core.logging import get_logger
 from app.providers.base import ConnectionTest
-from app.providers.existing.base import AgentCallError, AgentConnection, AgentFile, AgentReply, OnDelta
+from app.providers.existing.base import (
+    AgentCallError,
+    AgentConnection,
+    AgentFile,
+    AgentReply,
+    OnDelta,
+    OnPreview,
+)
 
 log = get_logger("existing.chatgpt_workspace")
 DEFAULT_BASE = "https://api.chatgpt.com/v1"
@@ -149,6 +156,7 @@ class ChatGPTWorkspaceAgent:
         session_id: str | None,
         conversation_id: str,
         on_delta: OnDelta,
+        on_preview: OnPreview | None = None,
     ) -> AgentReply:
         base, agent_id = self._parse(conn)
         # one ChatGPT conversation per Origin chat: follow-ups continue the same agent thread

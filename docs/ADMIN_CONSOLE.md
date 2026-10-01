@@ -55,3 +55,15 @@ is shown **once**, when the token is created, and starts with `at-`. Origin refu
 keys at save time (HTTP 422, nothing stored) and explains the difference inline. Saving with an empty token field keeps
 the stored token and says so ("access token unchanged"). The typed token survives switching between the Connection,
 Test and Activity tabs until it is saved.
+
+### Which connection type shows images in the chat?
+
+| Type | Image in (attachments) | Image out | Live preview while generating |
+|---|---|---|---|
+| OpenAI GPT agent (Responses API) | yes — sent as `input_image` | yes — `image_generation` tool, saved as an artifact | yes — partial renders stream as `artifact.preview` events |
+| ChatGPT Workspace Agent (API trigger) | no — the API accepts text only (file names are mentioned in the prompt) | no — "The agent's response cannot currently be retrieved through the API" | no |
+| Custom HTTP endpoint | as configured (`files` in the JSON body) | `files[]` in the JSON reply | no |
+
+For a GPT-style "watch the image appear" experience connect the agent as an **OpenAI GPT agent** with a
+platform API key (`sk-…`) and, optionally, the agent's stored prompt id. A Workspace Agent run finishes
+inside ChatGPT; Origin shows its status, the steps it went through and an "Open in ChatGPT" link.

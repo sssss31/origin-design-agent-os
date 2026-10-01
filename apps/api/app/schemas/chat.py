@@ -59,6 +59,7 @@ class AttachmentOut(BaseModel):
     artifact_id: uuid.UUID | None = None
     name: str | None = None
     mime_type: str | None = None
+    size: int | None = None
 
 
 class MessageCreate(BaseModel):

@@ -16,10 +16,19 @@ export interface TimelineNode {
   qcPassed?: boolean | null;
 }
 
+/** An image still being generated: the provider's latest partial render for one output item. */
+export interface PreviewImage {
+  item: string;
+  url: string;
+  index: number;
+  final: boolean; // the finished artifact has arrived for this item
+}
+
 export interface Timeline {
   runStatus: RunState | "QUEUED";
   nodes: TimelineNode[];
   artifactIds: string[];
+  previews: PreviewImage[];
   pendingQuestion: { nodeId: string; question: string; schema?: Record<string, unknown> | null } | null;
   terminal: boolean;
   lastSequence: number;
@@ -34,6 +43,7 @@ export function deriveTimeline(events: EventOut[]): Timeline {
   let terminal = false;
   let error: string | null = null;
   const artifactIds: string[] = [];
+  const previews = new Map<string, PreviewImage>();
   let last = 0;
   const node = (id: string, name?: string | null, index?: number | null): TimelineNode => {
     let n = nodes.get(id);
@@ -62,10 +72,17 @@ export function deriveTimeline(events: EventOut[]): Timeline {
       case "tool.started":
         if (p.node_id && p.tool_slug) node(p.node_id).tools.push(p.tool_slug);
         break;
+      case "artifact.preview":
+        if (p.artifact_id && p.preview_url) {
+          const prev = previews.get(p.artifact_id);
+          if (!prev || (p.artifact_version ?? 0) >= prev.index) previews.set(p.artifact_id, { item: p.artifact_id, url: p.preview_url, index: p.artifact_version ?? 0, final: false });
+        }
+        break;
       case "artifact.created":
         if (p.artifact_id) {
           artifactIds.push(p.artifact_id);
           if (p.node_id) node(p.node_id).artifacts.push(p.artifact_id);
+          if (p.artifact_type === "image") for (const v of previews.values()) if (!v.final) { v.final = true; break; }
         }
         break;
       case "clarification.requested":
@@ -115,5 +132,5 @@ export function deriveTimeline(events: EventOut[]): Timeline {
         break;
     }
   }
-  return { runStatus, nodes: [...nodes.values()].sort((a, b) => a.index - b.index), artifactIds, pendingQuestion, terminal, lastSequence: last, error };
+  return { runStatus, nodes: [...nodes.values()].sort((a, b) => a.index - b.index), artifactIds, previews: [...previews.values()], pendingQuestion, terminal, lastSequence: last, error };
 }

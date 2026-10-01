@@ -923,6 +923,34 @@ class RunExecutor:
                 buffer.clear()
                 pending = 0
 
+        previews = 0
+
+        async def on_preview(file: ProducedFile) -> None:
+            """A partial render: kept outside the artifact store (overwritten per item), shown via a signed URL."""
+            nonlocal previews
+            previews += 1
+            if previews > 32:  # a runaway provider cannot fill the store
+                return
+            item = str(file.metadata.get("item_id") or "0")[:64].replace("/", "_")
+            key = f"org/{run.organization_id}/previews/{run.id}/{item}.png"
+            await self.adapters.storage.put(key, file.content, content_type=file.mime_type)
+            url = await self.adapters.storage.presign_download(
+                key, expires_in=max(self.settings.signed_url_ttl_seconds, 900)
+            )
+            await recorder.add(
+                EventType.ARTIFACT_PREVIEW,
+                SafeEventPayload(
+                    node_id=node.node_id,
+                    agent_slug=agent.slug,
+                    artifact_id=item,  # the provider's item id: previews of one image replace each other
+                    artifact_type="image",
+                    artifact_version=int(file.metadata.get("index") or 0),
+                    preview_url=url,
+                ),
+                node_run_id=node.id,
+            )
+            await recorder.commit()
+
         message = run.input_json.get("body") or parse_message(run.user_input).body or run.user_input
         started = datetime.now(UTC)
         try:
@@ -936,6 +964,7 @@ class RunExecutor:
                     adapters=self.adapters,
                     settings=self.settings,
                     on_delta=on_delta,
+                    on_preview=on_preview,
                     transport=getattr(self.adapters, "http_transport", None),
                 ),
                 timeout=float((agent.connection_config or {}).get("timeout_seconds") or 300),

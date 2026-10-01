@@ -100,8 +100,9 @@ export function Composer({
         {files.length ? (
           <div className="flex flex-wrap gap-2 px-3 pt-3">
             {files.map((f, i) => (
-              <span key={`${f.name}-${i}`} className="flex items-center gap-1 rounded-full bg-surface-2 px-2.5 py-1 text-xs">
-                {f.name}
+              <span key={`${f.name}-${i}`} className={`flex items-center gap-1.5 rounded-lg bg-surface-2 text-xs ${f.type.startsWith("image/") ? "p-1 pr-2" : "px-2.5 py-1"}`}>
+                {f.type.startsWith("image/") ? <AttachedImage file={f} /> : null}
+                <span className="max-w-[160px] truncate">{f.name}</span>
                 <button onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} className="text-faint hover:text-text"><X size={12} /></button>
               </span>
             ))}
@@ -171,4 +172,12 @@ export function Composer({
       <p className={`mt-2 text-center text-[11px] ${hint ? "text-warning" : "text-faint"}`}>{hint ?? <>Type <span className="font-mono">/agent</span> to switch agents. Follow-ups stay with the current agent.</>}</p>
     </div>
   );
+}
+
+/** Thumbnail of an image chosen in the composer (object URL, released on unmount). */
+function AttachedImage({ file }: { file: File }) {
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  // eslint-disable-next-line @next/next/no-img-element -- local object URL
+  return <img src={url} alt="" className="h-10 w-10 rounded-md object-cover" />;
 }

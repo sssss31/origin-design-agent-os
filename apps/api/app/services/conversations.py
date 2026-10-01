@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -284,19 +285,40 @@ async def serialize_messages(session: AsyncSession, messages: list[Message]) -> 
     )
     asset_ids = {a.asset_id for m in messages for a in m.attachments if a.asset_id}
     artifact_ids = {a.artifact_id for m in messages for a in m.attachments if a.artifact_id}
+    # the current version carries the type and size the UI needs to pick an image thumbnail or a file card
     assets = (
-        {a.id: a for a in (await session.scalars(select(Asset).where(Asset.id.in_(asset_ids)))).all()}
+        {
+            a.id: a
+            for a in (
+                await session.scalars(
+                    select(Asset).where(Asset.id.in_(asset_ids)).options(selectinload(Asset.versions))
+                )
+            ).all()
+        }
         if asset_ids
         else {}
     )
     artifacts = (
         {
             a.id: a
-            for a in (await session.scalars(select(Artifact).where(Artifact.id.in_(artifact_ids)))).all()
+            for a in (
+                await session.scalars(
+                    select(Artifact)
+                    .where(Artifact.id.in_(artifact_ids))
+                    .options(selectinload(Artifact.versions))
+                )
+            ).all()
         }
         if artifact_ids
         else {}
     )
+
+    def _current(versions: list[Any], current_id: uuid.UUID | None) -> Any:
+        for v in versions:
+            if v.id == current_id:
+                return v
+        return versions[-1] if versions else None
+
     out: list[MessageOut] = []
     for m in messages:
         agent = agents.get(m.agent_id) if m.agent_id else None
@@ -304,13 +326,25 @@ async def serialize_messages(session: AsyncSession, messages: list[Message]) -> 
         for a in m.attachments:
             if a.asset_id:
                 asset = assets.get(a.asset_id)
+                v = _current(asset.versions, asset.current_version_id) if asset else None
                 atts.append(
-                    AttachmentOut(asset_id=a.asset_id, name=asset.name if asset else None, mime_type=None)
+                    AttachmentOut(
+                        asset_id=a.asset_id,
+                        name=asset.name if asset else None,
+                        mime_type=v.mime_type if v else None,
+                        size=v.size_bytes if v else None,
+                    )
                 )
             elif a.artifact_id:
                 art = artifacts.get(a.artifact_id)
+                v = _current(art.versions, art.current_version_id) if art else None
                 atts.append(
-                    AttachmentOut(artifact_id=a.artifact_id, name=art.name if art else None, mime_type=None)
+                    AttachmentOut(
+                        artifact_id=a.artifact_id,
+                        name=art.name if art else None,
+                        mime_type=v.mime_type if v else None,
+                        size=v.size_bytes if v else None,
+                    )
                 )
         out.append(
             from_orm(
