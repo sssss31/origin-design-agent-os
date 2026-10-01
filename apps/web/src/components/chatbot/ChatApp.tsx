@@ -35,23 +35,33 @@ function Conversation({ conversationId, agents, firstName }: { conversationId: s
   const chat = useConversation(conversationId);
   const activeAgent = chat.conversation?.active_agent ?? null;
   const agentName = activeAgent?.name ?? "Agent";
+  const composer = <Composer agents={agents} activeAgent={activeAgent} busy={chat.busy} autoFocus onSend={chat.send} onSelect={chat.select} onStop={chat.stop} />;
+  if (conversationId && !chat.loaded) {
+    return <main className="flex min-w-0 flex-1 items-center justify-center text-sm text-muted">Loading chat…</main>;
+  }
+  if (chat.loadError) {
+    return (
+      <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 px-4 text-sm">
+        <p className="text-danger">⚠ {chat.loadError}</p>
+        <button onClick={chat.reload} className="rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium hover:bg-surface-2">Retry</button>
+      </main>
+    );
+  }
   const empty = !conversationId || (chat.messages.length === 0 && !chat.pending && !chat.busy);
   return (
     <main className="flex min-w-0 flex-1 flex-col">
       {empty ? (
         <div className="flex flex-1 flex-col items-center justify-center px-4">
           <h1 className="mb-6 text-center text-3xl font-semibold tracking-tight">{firstName ? `Hi ${firstName}, what should we work on?` : "What should we work on?"}</h1>
-          <div className="w-full">
-            <Composer agents={agents} activeAgent={activeAgent} busy={chat.busy} autoFocus onSend={chat.send} onStop={chat.stop} />
-          </div>
+          <div className="w-full">{composer}</div>
           {agents.length ? (
             <div className="mt-2 flex max-w-3xl flex-wrap justify-center gap-2">
               {agents.map((a) => (
-                <span key={a.agent_id} className="rounded-full border border-border px-3 py-1 text-xs text-muted" title={a.description}><span className="font-mono text-accent">{a.command}</span> {a.name}</span>
+                <button key={a.agent_id} onClick={() => void chat.select(a.command)} className="rounded-full border border-border px-3 py-1 text-xs text-muted hover:border-accent" title={a.description}><span className="font-mono text-accent">{a.command}</span> {a.name}</button>
               ))}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-faint">No agents connected yet. An admin can add them under Agents & API keys.</p>
+            <p className="mt-2 text-xs text-faint">No agents connected yet. An admin can add them under Admin console → Agents.</p>
           )}
           {chat.error ? <p className="mt-3 text-sm text-danger">{chat.error}</p> : null}
         </div>
@@ -62,7 +72,7 @@ function Conversation({ conversationId, agents, firstName }: { conversationId: s
             {activeAgent ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] text-accent">{activeAgent.name} <span className="font-mono">{activeAgent.command}</span></span> : null}
           </header>
           <Thread messages={chat.messages} pending={chat.pending} busy={chat.busy} streamText={chat.streamText} timeline={chat.timeline} agentName={agentName} error={chat.error} onRetry={() => void chat.retry()} />
-          <Composer agents={agents} activeAgent={activeAgent} busy={chat.busy} autoFocus onSend={chat.send} onStop={chat.stop} />
+          {composer}
         </>
       )}
     </main>

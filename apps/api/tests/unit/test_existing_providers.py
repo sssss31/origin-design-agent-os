@@ -206,3 +206,50 @@ async def test_http_json_agent_maps_request_and_response(monkeypatch: pytest.Mon
         )
     assert exc.value.code == "agent_not_configured"
     assert (await provider.test_connection(conn)).ok
+
+
+async def test_http_json_agent_accepts_an_object_body_template(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The admin console stores Options as JSON; a dict body_template must be sent as JSON, not repr()."""
+    import app.core.ssrf as ssrf
+
+    monkeypatch.setattr(ssrf, "resolve_host", lambda host: ["93.184.216.34"])
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"reply": "ok", "files": seen["body"]["files"]})
+
+    agent = HttpJsonAgent(Settings(_env_file=None), transport=httpx.MockTransport(handler))
+    conn = AgentConnection(
+        agent_slug="caption",
+        agent_name="Caption",
+        connection_type="http",
+        endpoint="https://agents.example.com/run",
+        api_key="k-1234567890",
+        config={
+            "response_text_path": "reply",
+            "files_path": "files",
+            "body_template": {
+                "message": "{{message}}",
+                "history": "{{history}}",
+                "files": [{"name": "card.png", "mime_type": "image/png", "data": "aGVsbG8="}],
+            },
+        },
+    )
+
+    async def noop(_: str) -> None:
+        return None
+
+    reply = await agent.send_message(
+        conn,
+        "hello",
+        history=[{"role": "user", "content": "hi"}],
+        files=[],
+        session_id=None,
+        conversation_id="c",
+        on_delta=noop,
+    )
+    assert seen["body"]["message"] == "hello" and seen["body"]["history"] == [
+        {"role": "user", "content": "hi"}
+    ]
+    assert reply.text == "ok" and len(reply.files) == 1 and reply.files[0].filename == "card.png"

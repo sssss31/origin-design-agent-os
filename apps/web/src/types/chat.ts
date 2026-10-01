@@ -34,6 +34,7 @@ export interface AttachmentOut {
   artifact_id?: string | null;
   name?: string | null;
   mime_type?: string | null;
+  size?: number | null;
 }
 
 export interface MessageOut {

@@ -37,7 +37,7 @@ async def test_chat_persists_and_is_searchable(app, make_user) -> None:  # type:
     msg = res.json()
     assert msg["command"] == "/resize" and msg["role"] == "user" and msg["content"].startswith("/resize")
     conv2 = (await actor.get(f"/api/v1/conversations/{conv['id']}")).json()
-    assert conv2["title"] == "make the poster 4:5 please" and conv2["last_message_at"]
+    assert conv2["title"] == "Resize: make the poster 4:5 please" and conv2["last_message_at"]
 
     # a second message without command, then listing returns chronological order (survives "restart": new session each request)
     await actor.post(f"/api/v1/conversations/{conv['id']}/messages", json={"content": "and keep the logo"})

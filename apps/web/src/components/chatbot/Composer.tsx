@@ -2,16 +2,23 @@
 
 import { ArrowUp, ChevronDown, Paperclip, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { matchAgents, parseSlash } from "@/lib/slash";
 import type { CommandOut } from "@/types/admin";
 
 const ACCEPT = "image/png,image/jpeg,image/webp,image/svg+xml,application/pdf,.docx";
 
+/**
+ * One selection path for both the "/" palette and the agent dropdown: `onSelect(command)`.
+ * "/resize" alone selects; "/resize text" sends "text" to that agent; plain text goes to the
+ * active agent. Nothing here ever clears the conversation.
+ */
 export function Composer({
   agents,
   activeAgent,
   busy,
   autoFocus,
   onSend,
+  onSelect,
   onStop,
 }: {
   agents: CommandOut[];
@@ -19,13 +26,14 @@ export function Composer({
   busy: boolean;
   autoFocus?: boolean;
   onSend: (content: string, files: File[]) => Promise<void>;
+  onSelect: (command: string) => Promise<void>;
   onStop?: () => void;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [chosen, setChosen] = useState<string | null>(null);
   const [agentMenu, setAgentMenu] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const [hint, setHint] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -38,10 +46,10 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
   }, [text]);
 
+  // command palette while the first token is being typed ("/", "/re", …)
   const typing = /^\/[a-z0-9_-]*$/i.exec(text.trimStart());
-  const menu = useMemo(() => (typing ? agents.filter((a) => a.command.startsWith(typing[0].toLowerCase())) : []), [typing, agents]);
-  const currentCommand = chosen ?? activeAgent?.command ?? null;
-  const current = agents.find((a) => a.command === currentCommand) ?? null;
+  const palette = useMemo(() => (typing ? matchAgents(typing[0], agents) : []), [typing, agents]);
+  const current = agents.find((a) => a.command === activeAgent?.command) ?? null;
 
   const pick = (a: CommandOut) => {
     setText(`${a.command} `);
@@ -51,25 +59,40 @@ export function Composer({
   const submit = async () => {
     const body = text.trim();
     if (!body || busy) return;
-    let content = body;
-    if (!body.startsWith("/") && chosen && chosen !== activeAgent?.command) content = `${chosen} ${body}`;
+    setHint(null);
+    const intent = parseSlash(body, agents);
+    if (intent.kind === "unknown") {
+      const tips = intent.suggestions.map((s) => s.command).join(", ");
+      setHint(`Unknown command ${intent.command}.${tips ? ` Did you mean ${tips}?` : ""} Type / to see all agents.`);
+      return;
+    }
+    if (intent.kind === "select") {
+      setText("");
+      await onSelect(intent.command);
+      ref.current?.focus();
+      return;
+    }
+    if (intent.kind === "plain" && !activeAgent && agents.length) {
+      setHint("Choose an agent first: type / or use the agent menu.");
+      return;
+    }
     setText("");
     const selected = files;
     setFiles([]);
-    setChosen(null);
-    await onSend(content, selected);
+    await onSend(intent.kind === "send" ? `${intent.command} ${intent.body}` : intent.text, selected);
   };
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-4">
       <div className="relative rounded-2xl border border-border bg-surface shadow-[var(--shadow)] focus-within:border-border-strong">
-        {menu.length ? (
-          <div role="listbox" className="absolute bottom-full left-0 right-0 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-lg">
-            {menu.map((a, i) => (
-              <button key={a.agent_id} role="option" aria-selected={i === highlight} onMouseDown={(e) => { e.preventDefault(); pick(a); }} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm ${i === highlight ? "bg-surface-2" : "hover:bg-surface-2"}`}>
+        {palette.length ? (
+          <div role="listbox" aria-label="Agents" className="absolute bottom-full left-0 right-0 mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-surface p-1 shadow-lg">
+            <p className="px-3 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-faint">Agents</p>
+            {palette.map((a, i) => (
+              <button key={a.command} role="option" aria-selected={i === highlight} onMouseDown={(e) => { e.preventDefault(); pick(a as CommandOut); }} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm ${i === highlight ? "bg-surface-2" : "hover:bg-surface-2"}`}>
                 <span className="font-mono text-accent">{a.command}</span>
                 <span className="font-medium">{a.name}</span>
-                <span className="truncate text-xs text-muted">{a.description}</span>
+                <span className="truncate text-xs text-muted">{(a as CommandOut).description}</span>
               </button>
             ))}
           </div>
@@ -90,15 +113,18 @@ export function Composer({
           value={text}
           placeholder={current ? `Message ${current.name}…` : "Message an agent… type / to choose one"}
           className="block w-full resize-none bg-transparent px-4 pt-4 pb-2 text-[15px] leading-6 outline-none placeholder:text-faint"
-          onChange={(e) => { setText(e.target.value); setHighlight(0); }}
+          onChange={(e) => { setText(e.target.value); setHighlight(0); setHint(null); }}
           onKeyDown={(e) => {
-            if (menu.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            if (palette.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
               e.preventDefault();
-              setHighlight((h) => (h + (e.key === "ArrowDown" ? 1 : menu.length - 1)) % menu.length);
-            } else if (menu.length && (e.key === "Tab" || e.key === "Enter")) {
+              setHighlight((h) => (h + (e.key === "ArrowDown" ? 1 : palette.length - 1)) % palette.length);
+            } else if (palette.length && e.key === "Escape") {
               e.preventDefault();
-              const a = menu[highlight];
-              if (a) pick(a);
+              setText("");
+            } else if (palette.length && (e.key === "Tab" || e.key === "Enter")) {
+              e.preventDefault();
+              const a = palette[highlight];
+              if (a) pick(a as CommandOut);
             } else if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               void submit();
@@ -110,15 +136,23 @@ export function Composer({
             <button type="button" onClick={() => fileRef.current?.click()} className="rounded-lg p-2 text-muted hover:bg-surface-2 hover:text-text" aria-label="Attach files"><Paperclip size={17} /></button>
             <input ref={fileRef} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => { setFiles([...files, ...Array.from(e.target.files ?? [])]); e.target.value = ""; }} />
             <div className="relative">
-              <button type="button" onClick={() => setAgentMenu((v) => !v)} className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-text">
-                {current ? <><span className="font-medium text-text">{current.name}</span><span className="font-mono text-xs text-accent">{current.command}</span></> : "Choose agent"}
+              <button type="button" onClick={() => setAgentMenu((v) => !v)} aria-haspopup="listbox" aria-expanded={agentMenu} className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-text">
+                {current ? (
+                  <>
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-accent-soft text-[10px] font-semibold text-accent">{current.name.slice(0, 1)}</span>
+                    <span className="font-medium text-text">{current.name}</span>
+                    <span className="font-mono text-xs text-accent">{current.command}</span>
+                  </>
+                ) : (
+                  "Choose agent"
+                )}
                 <ChevronDown size={14} />
               </button>
               {agentMenu ? (
-                <div className="absolute bottom-full left-0 z-20 mb-1 w-72 rounded-xl border border-border bg-surface p-1 shadow-lg">
+                <div role="listbox" className="absolute bottom-full left-0 z-20 mb-1 w-72 rounded-xl border border-border bg-surface p-1 shadow-lg">
                   {agents.length === 0 ? <p className="px-3 py-2 text-xs text-muted">No agents connected yet.</p> : null}
                   {agents.map((a) => (
-                    <button key={a.agent_id} onClick={() => { setChosen(a.command); setAgentMenu(false); ref.current?.focus(); }} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-2 ${a.command === currentCommand ? "bg-surface-2" : ""}`}>
+                    <button key={a.agent_id} role="option" aria-selected={a.command === activeAgent?.command} onClick={() => { setAgentMenu(false); void onSelect(a.command).then(() => ref.current?.focus()); }} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-2 ${a.command === activeAgent?.command ? "bg-surface-2" : ""}`}>
                       <span className="font-medium">{a.name}</span>
                       <span className="ml-auto font-mono text-xs text-accent">{a.command}</span>
                     </button>
@@ -134,7 +168,7 @@ export function Composer({
           )}
         </div>
       </div>
-      <p className="mt-2 text-center text-[11px] text-faint">Type <span className="font-mono">/agent</span> at the start of a message to switch agents. Follow-ups stay with the current agent.</p>
+      <p className={`mt-2 text-center text-[11px] ${hint ? "text-warning" : "text-faint"}`}>{hint ?? <>Type <span className="font-mono">/agent</span> to switch agents. Follow-ups stay with the current agent.</>}</p>
     </div>
   );
 }

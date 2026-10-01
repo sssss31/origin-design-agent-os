@@ -21,6 +21,7 @@ from sqlalchemy.orm import selectinload
 
 from app.adapters.registry import Adapters
 from app.core.config import Settings
+from app.domain.slash import parse_message
 from app.models.agents import Agent
 from app.models.chat import AgentSession, Message
 from app.models.files import Artifact, Asset
@@ -90,7 +91,7 @@ async def load_context(
             # another agent's answer: keep a short reference only (§12)
             text = f"[{m.metadata_json.get('agent_name', 'another agent')}] " + m.content.strip()[:400]
         else:
-            text = m.content.strip()[:2000]
+            text = (parse_message(m.content).body if m.role == "user" else m.content).strip()[:2000]
         if total + len(text) > HISTORY_CHARS or len(history) >= HISTORY_LIMIT:
             break
         history.append({"role": "user" if m.role == "user" else "assistant", "content": text})

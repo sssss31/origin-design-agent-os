@@ -183,6 +183,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _serverless_defaults(self) -> Settings:
+        if self.serverless and self.stale_run_seconds == 900:
+            self.stale_run_seconds = 150  # a run with no progress for 2.5 min has lost its instance
         if self.serverless and self.local_storage_path == ".data/storage":
             self.local_storage_path = "/tmp/origin-storage"  # noqa: S108  # nosec B108 - only writable path on Vercel
         if self.serverless and "@db." in self.database_url and ".supabase.co" in self.database_url:

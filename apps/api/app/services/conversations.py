@@ -129,7 +129,7 @@ class ConversationService:
             self.session.add(MessageAttachment(message_id=msg.id, artifact_id=artifact_id))
         conv.last_message_at = datetime.now(UTC)
         if conv.title == "New chat":
-            conv.title = (parsed.body or data.content).strip()[:80] or "New chat"
+            conv.title = await self._title_for(parsed.body or data.content, conv, parsed.command)
         await self.session.flush()
         return await self.session.scalar(
             select(Message)
@@ -137,6 +137,20 @@ class ConversationService:
             .where(Message.id == msg.id)
             .execution_options(populate_existing=True)
         )  # type: ignore[return-value]
+
+    async def _title_for(self, text: str, conv: Conversation, command: str | None) -> str:
+        """'Resize: 4:5' rather than '4:5' — the agent name gives short requests their meaning."""
+        from app.models.agents import Agent
+
+        body = " ".join(text.split())[:70] or "New chat"
+        agent_name: str | None = None
+        if command:
+            agent_name = command.lstrip("/").replace("_", " ").replace("-", " ").title()
+        elif conv.active_agent_id:
+            agent = await self.session.get(Agent, conv.active_agent_id)
+            if agent is not None:
+                agent_name = agent.name.replace(" Agent", "").replace(" agent", "")
+        return f"{agent_name}: {body}"[:80] if agent_name else body
 
     async def add_assistant_message(
         self,
@@ -225,7 +239,26 @@ class ConversationService:
                 raise ValidationFailed("No active agent handles that command", code="agent_unavailable")
             if agent.is_manager:
                 agent = None
+        previous = conv.active_agent_id
         conv.active_agent_id = agent.id if agent else None
+        if conv.active_agent_id != previous:
+            # a persistent, visible system event ("Resize Agent selected") — survives refresh
+            label = f"{agent.name} selected" if agent else "Back to automatic routing"
+            self.session.add(
+                Message(
+                    conversation_id=conv.id,
+                    role="system",
+                    content=label,
+                    command=agent.command if agent else None,
+                    agent_id=agent.id if agent else None,
+                    author_user_id=self._require_ctx().user_id,
+                    metadata_json={
+                        "event": "agent.selected",
+                        "agent_name": agent.name if agent else None,
+                        "command": agent.command if agent else None,
+                    },
+                )
+            )
         await self.session.flush()
         return conv
 

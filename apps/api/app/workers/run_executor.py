@@ -27,6 +27,7 @@ from app.domain.qc import parse_report
 from app.domain.roles import Role, has_at_least
 from app.domain.run_state import NodeState, RunState
 from app.domain.session_memory import budget_chars, count_turns, item_chars, trim_input_list
+from app.domain.slash import parse_message
 from app.models.agents import Agent, AgentVersion
 from app.models.chat import AgentSession, Conversation
 from app.models.files import Artifact, ArtifactVersion
@@ -695,7 +696,7 @@ class RunExecutor:
                 )
                 session_state = {"input_list": trimmed}
         run_input = RunInput(
-            user_input=run.input_json.get("body") or run.user_input,
+            user_input=run.input_json.get("body") or parse_message(run.user_input).body or run.user_input,
             context_summary=context_summary,
             resume_state=node.resume_state_json,
             clarification_answer=node.answer,
@@ -919,7 +920,7 @@ class RunExecutor:
                 buffer.clear()
                 pending = 0
 
-        message = run.input_json.get("body") or run.user_input
+        message = run.input_json.get("body") or parse_message(run.user_input).body or run.user_input
         started = datetime.now(UTC)
         try:
             reply = await asyncio.wait_for(

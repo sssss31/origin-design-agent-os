@@ -14,13 +14,14 @@ from app.adapters.registry import Adapters
 from app.core.authz import AuthContext
 from app.core.config import Settings
 from app.core.errors import NotFound, RateLimited, ValidationFailed
+from app.core.logging import get_logger
 from app.domain.events import EventType, SafeEventPayload
 from app.domain.roles import Role
 from app.domain.run_state import NodeState, RunState, assert_run_transition
 from app.domain.slash import parse_message
 from app.models.chat import Conversation, Message
 from app.models.identity import Organization
-from app.models.workflows import NodeRun, WorkflowRun
+from app.models.workflows import ExecutionEvent, NodeRun, WorkflowRun
 from app.ports.queue import Job
 from app.schemas.chat import MessageCreate
 from app.schemas.runs import ClarificationAnswer, RunCreate
@@ -30,6 +31,7 @@ from app.services.conversations import ConversationService
 from app.services.events import EventRecorder
 from app.services.router import resolve_route
 
+log = get_logger("runs")
 JOB_TYPE = "run.execute"
 SAVE_NODE_INDEX = 1000
 
@@ -155,6 +157,20 @@ class RunService:
                     details={"run_id": str(message.run_id)},
                 )
         elif data.content:
+            pre = parse_message(data.content)
+            if (
+                pre.command
+                and not pre.body
+                and not data.selected_asset_ids
+                and not data.selected_artifact_ids
+            ):
+                # "/resize" alone selects an agent (PUT /active-agent); it is never a prompt
+                raise ValidationFailed(
+                    f"Nothing to send: type {pre.command} followed by your request, "
+                    f"or just {pre.command} to select the agent.",
+                    code="empty_prompt",
+                    details={"command": pre.command},
+                )
             message = await ConversationService(self.session, self.ctx).add_user_message(
                 conv.id,
                 MessageCreate(
@@ -202,7 +218,7 @@ class RunService:
             message_id=message.id,
             status=RunState.QUEUED,
             command=route.command,
-            user_input=message.content,
+            user_input=parsed.body or message.content,
             entry_agent_id=route.agent.id,
             plan_json=plan_for_existing(route.agent.slug, route.agent.name)
             if route.agent.connection_type != "origin"
@@ -263,7 +279,55 @@ class RunService:
     # ------------------------------------------------------------------ reads
     async def get(self, run_id: uuid.UUID) -> WorkflowRun:
         run, _ = await self._run(run_id)
+        await self.reap_if_stale(run)
         return run
+
+    async def reap_if_stale(self, run: WorkflowRun) -> bool:
+        """A run that is RUNNING but has not been touched for `stale_run_seconds` has lost its
+        executor (serverless instance gone, worker crash). Mark it failed so the chat shows
+        Retry instead of waiting forever. Returns True when the run was reaped."""
+        if run.status != RunState.RUNNING or run.heartbeat_at is None:
+            return False
+        last_event = await self.session.scalar(
+            select(func.max(ExecutionEvent.occurred_at)).where(ExecutionEvent.run_id == run.id)
+        )
+        last_seen = max(run.heartbeat_at, last_event) if last_event else run.heartbeat_at
+        if datetime.now(UTC) - last_seen < timedelta(seconds=self.settings.stale_run_seconds):
+            return False
+        recorder = EventRecorder(self.session, self.adapters.events, run.id)
+        for node in run.nodes:
+            if node.status == NodeState.RUNNING:
+                node.status = NodeState.FAILED
+                node.error_json = {
+                    "code": "interrupted",
+                    "message": "The agent run was interrupted. Retry.",
+                    "retryable": True,
+                }
+                await recorder.add(
+                    EventType.NODE_FAILED,
+                    SafeEventPayload(
+                        node_id=node.node_id,
+                        node_status=NodeState.FAILED,
+                        error_code="interrupted",
+                        error_message="The agent run was interrupted. Retry.",
+                        retryable=True,
+                    ),
+                    node_run_id=node.id,
+                )
+        run.status = RunState.FAILED
+        run.error_json = {
+            "code": "interrupted",
+            "message": "The agent run was interrupted (no progress for a while). Retry.",
+            "retryable": True,
+        }
+        run.finished_at = datetime.now(UTC)
+        await recorder.add(
+            EventType.RUN_FAILED,
+            SafeEventPayload(run_status=RunState.FAILED, error_code="interrupted", retryable=True),
+        )
+        await recorder.commit()
+        log.warning("run_reaped_stale", run_id=str(run.id))
+        return True
 
     async def list_for_conversation(self, conversation_id: uuid.UUID, limit: int = 50) -> list[WorkflowRun]:
         conv = await self.session.get(Conversation, conversation_id)

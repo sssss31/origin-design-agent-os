@@ -56,6 +56,19 @@ def _path(data: Any, path: str | None) -> Any:
     return cur
 
 
+def _template_text(template: Any) -> str:
+    """The admin may paste the body template as a JSON object (not a string). Serialise it and
+    un-quote the placeholders that stand for whole JSON values so they are injected raw."""
+    if not template:
+        return DEFAULT_BODY
+    if isinstance(template, str):
+        return template
+    text = json.dumps(template)
+    for name in ("history", "files"):
+        text = text.replace(f'"{{{{{name}}}}}"', f"{{{{{name}}}}}")
+    return text
+
+
 class HttpJsonAgent:
     connection_type = "http"
     display_name = "HTTP JSON endpoint"
@@ -112,7 +125,7 @@ class HttpJsonAgent:
         headers.setdefault("Content-Type", "application/json")
         headers.setdefault("Accept", "application/json")
         body = render(
-            str(cfg.get("body_template") or DEFAULT_BODY),
+            _template_text(cfg.get("body_template")),
             variables=variables,
             secrets=secrets,
             json_mode=True,

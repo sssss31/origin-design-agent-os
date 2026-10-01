@@ -30,11 +30,17 @@ def resolve_host(host: str) -> list[str]:
     return sorted({str(info[4][0]) for info in infos})
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _is_public(ip: str) -> bool:
     try:
         addr = ipaddress.ip_address(ip.split("%")[0])
     except ValueError:
         return False
+    # NAT64 (RFC 6052, 64:ff9b::/96): judge the embedded IPv4 address, not the synthesised prefix
+    if isinstance(addr, ipaddress.IPv6Address) and addr in _NAT64:
+        return _is_public(str(ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF)))
     if (
         addr.is_private
         or addr.is_loopback
