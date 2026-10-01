@@ -348,3 +348,20 @@ async def test_openai_responses_streams_partial_images_and_enables_the_image_too
     assert body["tools"] == [
         {"type": "image_generation", "partial_images": 3, "size": "1024x1536", "quality": "high"}
     ]
+
+
+def test_openai_responses_sends_agent_instructions() -> None:
+    provider = OpenAIResponsesAgent()
+    conn = AgentConnection(
+        "resize",
+        "Resize",
+        "openai_responses",
+        None,
+        "sk-test",
+        {"model": "gpt-5", "instructions": "  You resize posters. "},
+    )
+    body, _ = provider._body(conn, "4:5 please", history=[], files=[], session_id=None)
+    assert body["instructions"] == "You resize posters."
+    conn.config = {"model": "gpt-5", "instructions": "   "}
+    body, _ = provider._body(conn, "x", history=[], files=[], session_id=None)
+    assert "instructions" not in body

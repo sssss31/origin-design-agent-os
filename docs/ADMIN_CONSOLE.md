@@ -67,3 +67,10 @@ Test and Activity tabs until it is saved.
 For a GPT-style "watch the image appear" experience connect the agent as an **OpenAI GPT agent** with a
 platform API key (`sk-…`) and, optionally, the agent's stored prompt id. A Workspace Agent run finishes
 inside ChatGPT; Origin shows its status, the steps it went through and an "Open in ChatGPT" link.
+
+### Moving a ChatGPT Workspace Agent "into" Origin
+
+Open the agent in ChatGPT, copy its instructions, then in Origin add an **OpenAI GPT agent (Responses API)**
+with a platform API key, a model and those instructions (the "Instructions (system prompt)" field, sent as
+the Responses API `instructions`). Replies and generated images then appear inside Origin; the Workspace
+Agent itself keeps working only inside ChatGPT.

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Field, Input } from "@/components/ui/Input";
+import { Field, Input, Textarea } from "@/components/ui/Input";
 import { JsonField, Select } from "@/components/ui/JsonField";
 import type { AgentConnectionOut } from "@/types/admin";
 
@@ -87,6 +87,11 @@ export function ConnectionForm({ draft, onChange, existing }: { draft: Connectio
         <>
           <OptionInput draft={draft} onChange={onChange} name="prompt_id" label="Prompt / agent id" hint="pmpt_… from the OpenAI dashboard (optional)" placeholder="pmpt_…" />
           <OptionInput draft={draft} onChange={onChange} name="model" label="Model" hint="Used when the prompt does not pin one" placeholder="gpt-4.1" />
+          <div className="sm:col-span-2">
+            <Field label="Instructions (system prompt)" hint="Paste the agent's instructions from ChatGPT here so it behaves the same inside Origin — replies and images then appear in this chat. Leave empty when a stored prompt id defines them.">
+              <Textarea rows={6} value={String(draft.config.instructions ?? "")} placeholder="You are the Creative Resize agent. Given a design and a target ratio…" onChange={(e) => { const config = { ...draft.config }; if (e.target.value.trim() === "") delete config.instructions; else config.instructions = e.target.value; onChange({ ...draft, config }); }} />
+            </Field>
+          </div>
           <p className="sm:col-span-2 text-xs text-muted">Images: attached images are sent to the model; the built-in <code>image_generation</code> tool is on, and renders stream into the chat as they form (GPT-style). Raw options: <code>image_generation: false</code> to turn it off, <code>image_options</code> for size/quality/output_format, <code>partial_images</code> (default 2).</p>
         </>
       ) : (

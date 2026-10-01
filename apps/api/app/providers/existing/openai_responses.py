@@ -6,6 +6,7 @@ Contract used (https://platform.openai.com/docs/api-reference/responses):
 - SSE events: `response.output_text.delta` (text chunks), `response.completed` (final object
   with `id`, `output[]`, `usage`), `error` / `response.failed`.
 - Files: images as `input_image` (data URL), PDFs as `input_file` (`file_data` data URL).
+- `instructions` (config) is sent as the request's `instructions` (the agent's system prompt).
 - Images out: the built-in `image_generation` tool (on by default, `image_generation: false` turns it
   off); `partial_images` makes the stream carry `response.image_generation_call.partial_image`
   events (`partial_image_b64`, `partial_image_index`, `item_id`) so the UI can show the render as it
@@ -135,6 +136,10 @@ class OpenAIResponsesAgent:
                 )
         input_items.append({"role": "user", "content": self._content_items(message, files, warnings)})
         body["input"] = input_items
+        if str(cfg.get("instructions") or "").strip():
+            # the agent's own system prompt (e.g. copied from its ChatGPT configuration); sent as the
+            # Responses API `instructions` field so the model behaves like that agent inside Origin
+            body["instructions"] = str(cfg["instructions"]).strip()
         for key in (
             "temperature",
             "max_output_tokens",
