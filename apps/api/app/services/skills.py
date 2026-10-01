@@ -60,7 +60,7 @@ class SkillService:
             ip_address=self.ctx.ip_address,
         )
 
-    def _query(self) -> Select[tuple[Skill]]:
+    def _query(self) -> Select[Any]:
         return (
             select(Skill)
             .options(selectinload(Skill.versions).selectinload(SkillVersion.files))

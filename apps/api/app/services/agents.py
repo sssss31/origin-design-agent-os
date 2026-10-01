@@ -91,7 +91,7 @@ class AgentService:
             ip_address=self.ctx.ip_address,
         )
 
-    def _query(self) -> Select[tuple[Agent]]:
+    def _query(self) -> Select[Any]:
         return select(Agent).options(*_load_options()).where(Agent.organization_id == self.org_id)
 
     async def list(self) -> list[Agent]:

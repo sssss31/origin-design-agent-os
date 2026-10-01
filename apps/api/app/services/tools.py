@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +42,7 @@ class ToolService:
             ip_address=self.ctx.ip_address,
         )
 
-    def _query(self) -> Select[tuple[Tool]]:
+    def _query(self) -> Select[Any]:
         return (
             select(Tool)
             .options(selectinload(Tool.versions), selectinload(Tool.permissions))

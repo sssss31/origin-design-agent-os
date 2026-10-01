@@ -86,7 +86,7 @@ class IntegrationService:
             ip_address=self.ctx.ip_address,
         )
 
-    def _query(self) -> Select[tuple[CustomIntegration]]:
+    def _query(self) -> Select[Any]:
         return (
             select(CustomIntegration)
             .options(selectinload(CustomIntegration.secrets))
