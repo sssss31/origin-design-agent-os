@@ -213,7 +213,12 @@ class ChatGPTWorkspaceAgent:
             ) from exc
         link = f"[Open in ChatGPT]({url})" if url else "Open the agent in ChatGPT to see the result."
         if status == "completed":
-            text = f"✅ **{conn.agent_name} finished the run in ChatGPT.** {link}"
+            text = (
+                f"✅ **{conn.agent_name} finished the run in ChatGPT.** {link}\n\n"
+                "The result (text and any images) is in that ChatGPT conversation — the Workspace Agents API "
+                "does not return it here. For images that render inside this chat, connect the agent as an "
+                "OpenAI GPT agent (Responses API)."
+            )
         elif status in ("queued", "in_progress", "suspended"):
             text = (
                 f"⏳ **{conn.agent_name} is still working in ChatGPT** (status: {status}). {link}\n\n"
