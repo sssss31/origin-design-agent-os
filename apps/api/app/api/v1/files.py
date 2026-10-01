@@ -24,7 +24,7 @@ async def download_local_file(
     filename: str | None = Query(default=None),
 ) -> Response:
     storage = request.app.state.adapters.storage
-    if not isinstance(storage, LocalFSStorage):
+    if not isinstance(storage, LocalFSStorage):  # LocalFSStorage and DbStorage sign their own URLs
         raise NotFound("Not found")
     if not storage.verify(key, expires, signature):
         raise Forbidden("Signed URL is invalid or expired", code="bad_signature")

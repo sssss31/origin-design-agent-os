@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     redis_url: str | None = None
 
     # --- pluggable adapters (see app/adapters/registry.py) ---------------------------
-    storage_backend: Literal["local", "s3"] = "local"
+    storage_backend: Literal["local", "s3", "db"] = "local"
     local_storage_path: str = ".data/storage"
     object_storage_endpoint: str | None = None
     object_storage_public_endpoint: str | None = None
@@ -185,6 +185,8 @@ class Settings(BaseSettings):
     def _serverless_defaults(self) -> Settings:
         if self.serverless and self.stale_run_seconds == 900:
             self.stale_run_seconds = 150  # a run with no progress for 2.5 min has lost its instance
+        if self.serverless and self.storage_backend == "local":
+            self.storage_backend = "db"  # the function disk is per-instance and ephemeral
         if self.serverless and self.local_storage_path == ".data/storage":
             self.local_storage_path = "/tmp/origin-storage"  # noqa: S108  # nosec B108 - only writable path on Vercel
         if self.serverless and "@db." in self.database_url and ".supabase.co" in self.database_url:
@@ -211,7 +213,9 @@ class Settings(BaseSettings):
             problems.append("ENCRYPTION_KEY is required for the fernet secret backend")
         if not (self.single_instance or self.serverless):
             if self.storage_backend == "local":
-                problems.append("STORAGE_BACKEND=local is not allowed; use s3 (or SINGLE_INSTANCE=true)")
+                problems.append(
+                    "STORAGE_BACKEND=local is not allowed; use s3 or db (or SINGLE_INSTANCE=true)"
+                )
             if self.queue_backend == "inline":
                 problems.append("QUEUE_BACKEND=inline is not allowed; use redis (or SINGLE_INSTANCE=true)")
             if self.event_bus_backend == "memory":

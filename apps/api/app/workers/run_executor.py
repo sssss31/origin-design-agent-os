@@ -882,13 +882,16 @@ class RunExecutor:
         gw_ctx = await load_context(
             session, conversation_id=run.conversation_id, agent=agent, exclude_message_id=run.message_id
         )
-        files = await prepare_files(
-            session,
-            self.adapters.storage,
-            asset_ids=[uuid.UUID(a) for a in run.input_json.get("selected_asset_ids", [])],
-            artifact_ids=[uuid.UUID(a) for a in run.input_json.get("selected_artifact_ids", [])],
-            settings=self.settings,
-        )
+        try:
+            files = await prepare_files(
+                session,
+                self.adapters.storage,
+                asset_ids=[uuid.UUID(a) for a in run.input_json.get("selected_asset_ids", [])],
+                artifact_ids=[uuid.UUID(a) for a in run.input_json.get("selected_artifact_ids", [])],
+                settings=self.settings,
+            )
+        except AgentCallError as exc:
+            raise NodeFailure(exc.code, exc.message, retryable=exc.retryable) from exc
         await recorder.add(
             EventType.AGENT_STARTED,
             SafeEventPayload(

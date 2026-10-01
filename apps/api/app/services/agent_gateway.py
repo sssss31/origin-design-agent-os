@@ -120,7 +120,13 @@ async def prepare_files(
             v = next((x for x in a.versions if x.id == a.current_version_id), None)
             if v is None:
                 continue
-            content = await storage.get(v.storage_key)
+            try:
+                content = await storage.get(v.storage_key)
+            except FileNotFoundError as exc:
+                raise AgentCallError(
+                    "attachment_missing",
+                    f"The attached file '{a.name}' is no longer available. Re-attach it and send again.",
+                ) from exc
             url = await storage.presign_download(
                 v.storage_key, expires_in=settings.signed_url_ttl_seconds, filename=a.name
             )

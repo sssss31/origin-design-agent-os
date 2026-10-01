@@ -37,7 +37,7 @@ The browser only talks to the web project; Next proxies `/api/v1/*` to the API p
 3. **Deploy**. The first request runs the database migrations (under an advisory lock) and creates the admin. Check `https://origin-api-<hash>.vercel.app/healthz` → `{"status":"ok"}`.
 4. Vercel → project `origin-api` → **Settings → Deployment Protection** → turn **Vercel Authentication off** for Production, otherwise the web project cannot reach the API.
 
-How it works in serverless mode (`SERVERLESS=true`): there is no background worker — the chat's SSE request executes the agent call while streaming it (up to 300 s per message); the database engine uses no pool; uploads go to `/tmp` (ephemeral — set `STORAGE_BACKEND=s3` with Supabase Storage for durable files).
+How it works in serverless mode (`SERVERLESS=true`): there is no background worker — the chat's SSE request executes the agent call while streaming it (up to 300 s per message); the database engine uses no pool; uploads are stored in Postgres (`STORAGE_BACKEND=db`, table `stored_blobs`) so they survive across function instances; for large media set `STORAGE_BACKEND=s3` instead. Vercel limits request bodies to about 4.5 MB per upload.
 
 ## 3. Web on Vercel
 

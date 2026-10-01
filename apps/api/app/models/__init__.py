@@ -64,3 +64,4 @@ __all__ = [
     "Workspace",
     "WorkspaceMember",
 ]
+from app.models.storage import StoredBlob  # noqa: E402,F401

@@ -45,7 +45,17 @@ class Adapters:
         }
 
 
-def build_storage(settings: Settings) -> ObjectStorage:
+def build_storage(
+    settings: Settings, session_factory: async_sessionmaker[AsyncSession] | None = None
+) -> ObjectStorage:
+    if settings.storage_backend == "db":
+        if session_factory is None:
+            raise ValueError("STORAGE_BACKEND=db needs a database session factory")
+        from app.adapters.storage.db import DbStorage
+
+        return DbStorage(
+            session_factory, signing_key=settings.jwt_secret, public_base_url=settings.api_prefix
+        )
     if settings.storage_backend == "s3":
         from app.adapters.storage.s3 import S3Storage
 
@@ -162,7 +172,7 @@ def build_runners(settings: Settings) -> dict[str, AgentRunner]:
 def build_adapters(settings: Settings, session_factory: async_sessionmaker[AsyncSession]) -> Adapters:
     providers = build_providers(settings)
     return Adapters(
-        storage=build_storage(settings),
+        storage=build_storage(settings, session_factory),
         secrets=build_secret_store(settings, session_factory),
         queue=build_queue(settings),
         events=build_event_bus(settings),
