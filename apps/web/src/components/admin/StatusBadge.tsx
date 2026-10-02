@@ -18,3 +18,10 @@ export function RunBadge({ status }: { status: string }) {
 export function typeLabel(type: string | undefined): string {
   return type === "openai_responses" ? "OpenAI" : type === "chatgpt_workspace" ? "ChatGPT agent" : type === "http" ? "HTTP" : "Origin";
 }
+
+/** Which runtime answers inside Origin (execution brief §3). */
+export function RuntimeBadge({ agent }: { agent: AgentSummaryOut }) {
+  const c = agent.connection;
+  if (!c || c.connection_type !== "chatgpt_workspace") return null;
+  return agent.runtime?.execution_mode === "origin_native" ? <Badge tone="accent">Origin Native</Badge> : <Badge tone="warning">Workspace Trigger</Badge>;
+}

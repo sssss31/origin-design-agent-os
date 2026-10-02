@@ -44,6 +44,7 @@ class ConversationOut(ORMModel):
     created_at: datetime
     updated_at: datetime
     active_agent: ActiveAgentOut | None = None
+    current_artifact_id: uuid.UUID | None = None
     memory: list[AgentMemoryOut] = Field(default_factory=list)
 
 

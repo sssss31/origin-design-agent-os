@@ -26,6 +26,7 @@ export interface ConversationOut {
   created_at: string;
   updated_at: string;
   active_agent: ActiveAgentOut | null;
+  current_artifact_id?: string | null;
   memory: AgentMemoryOut[];
 }
 

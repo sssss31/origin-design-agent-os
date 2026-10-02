@@ -263,6 +263,28 @@ export interface AgentSummaryOut {
   has_draft: boolean;
   model: string | null;
   connection: AgentConnectionOut | null;
+  runtime: AgentRuntimeOut | null;
+}
+
+export type ExecutionMode = "origin_native" | "workspace_trigger";
+
+export interface AgentRuntimeOut {
+  execution_mode: ExecutionMode;
+  native_config: Record<string, unknown>;
+  native_configured: boolean;
+  native_api_key_preview: string | null;
+  workspace_agent_id: string | null;
+  native_available: boolean;
+}
+
+export interface NativeTestOut {
+  ok: boolean;
+  text: string | null;
+  images: { filename: string; mime_type: string; data_url: string; revised_prompt: string | null }[];
+  latency_ms: number;
+  response_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
 }
 
 export interface AgentOut extends AgentSummaryOut {

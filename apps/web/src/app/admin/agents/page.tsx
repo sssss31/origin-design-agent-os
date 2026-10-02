@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AdminShell, useAsyncAction } from "@/components/admin/AdminShell";
-import { ConnectionBadge, typeLabel } from "@/components/admin/StatusBadge";
+import { ConnectionBadge, RuntimeBadge, typeLabel } from "@/components/admin/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { Badge, Card, EmptyState, ErrorText } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -69,7 +69,7 @@ export default function AgentsPage() {
                   <td className="px-3 py-2 text-xs">{typeLabel(a.connection?.connection_type)}</td>
                   <td className="max-w-[220px] truncate px-3 py-2 text-xs text-muted">{a.connection?.api_endpoint ?? "—"}</td>
                   <td className="px-3 py-2 font-mono text-xs text-muted">{a.connection?.connection_type === "origin" ? "—" : a.connection?.configured ? a.connection.api_key_preview : <span className="text-warning">missing</span>}</td>
-                  <td className="px-3 py-2"><ConnectionBadge agent={a} /></td>
+                  <td className="px-3 py-2"><span className="flex flex-wrap gap-1"><ConnectionBadge agent={a} /><RuntimeBadge agent={a} /></span></td>
                   <td className="px-3 py-2"><Badge tone={a.status === "active" ? "success" : "neutral"}>{a.status === "active" ? "on" : a.status}</Badge></td>
                   <td className="px-3 py-2 text-xs text-faint">{a.connection?.connection_tested_at ? new Date(a.connection.connection_tested_at).toLocaleString() : "never"}</td>
                 </tr>

@@ -34,6 +34,12 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         comment="agent that plain messages go to after a /command activated it",
     )
+    current_artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("artifacts.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="the last artifact an agent produced here; follow-ups receive it automatically",
+    )
 
     messages: Mapped[list[Message]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at"

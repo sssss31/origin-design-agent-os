@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, File, Form, UploadFile, status
 
 from app.api.v1.admin import AdminAuth
 from app.core.authz import DB, Config
@@ -13,12 +13,15 @@ from app.schemas.admin import (
     AgentCurlImportIn,
     AgentImportOut,
     AgentOut,
+    AgentRuntimeIn,
     AgentSummaryOut,
     AgentTestOut,
     AgentTestRequest,
     AgentUpdate,
     AgentVersionInput,
     HandoffIn,
+    NativeTestImageOut,
+    NativeTestOut,
     ProviderConnectionOut,
     PublishRequest,
     SkillBindingIn,
@@ -26,7 +29,7 @@ from app.schemas.admin import (
     ToolBindingIn,
 )
 from app.services.admin_serializers import agent_out, agent_summary_out, provider_out
-from app.services.agents import AgentService, import_agent_from_curl, set_agent_connection
+from app.services.agents import AgentService, import_agent_from_curl, set_agent_connection, set_agent_runtime
 
 router = APIRouter(prefix="/agents")
 
@@ -117,6 +120,117 @@ async def test_connection(
         latency_ms=result.latency_ms,
         available_models=result.models,
         tested_at=agent.connection_tested_at,
+    )
+
+
+@router.put("/{agent_id}/runtime", response_model=AgentOut)
+async def set_runtime(
+    agent_id: uuid.UUID, body: AgentRuntimeIn, ctx: AdminAuth, session: DB, adapters: AdaptersDep
+) -> AgentOut:
+    """Execution brief §8: execution_mode + native runtime configuration (key write-only)."""
+    return await agent_out(session, await set_agent_runtime(session, ctx, agent_id, body, adapters))
+
+
+@router.post("/{agent_id}/test-native", response_model=NativeTestOut)
+async def test_native(
+    agent_id: uuid.UUID,
+    ctx: AdminAuth,
+    session: DB,
+    adapters: AdaptersDep,
+    settings: Config,
+    prompt: str = Form(..., min_length=1, max_length=20000),
+    file: UploadFile | None = File(default=None),
+) -> NativeTestOut:
+    """Execution brief §25: run the native runtime once with an optional image; images come back inline.
+    Nothing is written to a chat. Works in either execution mode so the runtime can be proven first."""
+    import asyncio
+    import base64
+    from datetime import UTC, datetime
+
+    from app.providers.existing.base import AgentCallError, AgentFile
+    from app.services.agent_gateway import (
+        NATIVE_RUNTIME,
+        build_existing_providers,
+        native_connection,
+    )
+
+    svc = AgentService(session, ctx)
+    agent = await svc.get(agent_id)
+    files: list[AgentFile] = []
+    if file is not None:
+        content = await file.read()
+        if len(content) > settings.max_upload_mb * 1024 * 1024:
+            return NativeTestOut(
+                ok=False,
+                text=None,
+                latency_ms=0,
+                error_code="file_too_large",
+                error_message="The file is too large.",
+            )
+        files.append(
+            AgentFile(
+                name=file.filename or "upload",
+                mime_type=file.content_type or "application/octet-stream",
+                content=content,
+            )
+        )
+    started = datetime.now(UTC)
+
+    async def _noop(_: str) -> None:
+        return None
+
+    try:
+        conn = await native_connection(agent, adapters)
+        provider = build_existing_providers(settings, transport=getattr(adapters, "http_transport", None))[
+            NATIVE_RUNTIME
+        ]
+        problems = provider.validate_config(conn)
+        if problems:
+            raise AgentCallError("agent_not_configured", f"{agent.name}: {'; '.join(problems)}")
+        reply = await asyncio.wait_for(
+            provider.send_message(
+                conn,
+                prompt,
+                history=[],
+                files=files,
+                session_id=None,
+                conversation_id=str(uuid.uuid4()),
+                on_delta=_noop,
+            ),
+            timeout=float((agent.native_config or {}).get("timeout_seconds") or 180),
+        )
+    except AgentCallError as exc:
+        return NativeTestOut(
+            ok=False,
+            text=None,
+            latency_ms=int((datetime.now(UTC) - started).total_seconds() * 1000),
+            error_code=exc.code,
+            error_message=exc.message,
+        )
+    except TimeoutError:
+        return NativeTestOut(
+            ok=False,
+            text=None,
+            latency_ms=int((datetime.now(UTC) - started).total_seconds() * 1000),
+            error_code="agent_timeout",
+            error_message="The native runtime did not answer in time.",
+        )
+    await svc._audit("agent.native_tested", agent.id, after={"ok": True, "images": len(reply.files)})
+    return NativeTestOut(
+        ok=True,
+        text=reply.text or None,
+        images=[
+            NativeTestImageOut(
+                filename=f.filename,
+                mime_type=f.mime_type,
+                data_url=f"data:{f.mime_type};base64,{base64.b64encode(f.content).decode()}",
+                revised_prompt=str(f.metadata.get("revised_prompt") or "") or None,
+            )
+            for f in reply.files
+            if f.artifact_type == "image"
+        ],
+        latency_ms=int((datetime.now(UTC) - started).total_seconds() * 1000),
+        response_id=reply.session_id,
     )
 
 

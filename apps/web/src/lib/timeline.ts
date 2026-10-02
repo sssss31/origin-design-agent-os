@@ -9,6 +9,8 @@ export interface TimelineNode {
   agent?: string | null;
   tools: string[];
   artifacts: string[];
+  /** application events inside the node, in order (e.g. "Image generation started", "Artifact stored") */
+  steps: { label: string; done: boolean }[];
   durationMs?: number | null;
   error?: string | null;
   outputSummary?: string | null;
@@ -48,7 +50,7 @@ export function deriveTimeline(events: EventOut[]): Timeline {
   const node = (id: string, name?: string | null, index?: number | null): TimelineNode => {
     let n = nodes.get(id);
     if (!n) {
-      n = { id, name: name ?? id, index: index ?? nodes.size, status: "PENDING", tools: [], artifacts: [] };
+      n = { id, name: name ?? id, index: index ?? nodes.size, status: "PENDING", tools: [], artifacts: [], steps: [] };
       nodes.set(id, n);
     }
     return n;
@@ -70,7 +72,19 @@ export function deriveTimeline(events: EventOut[]): Timeline {
         if (p.node_id) node(p.node_id).agent = p.agent_slug ?? null;
         break;
       case "tool.started":
-        if (p.node_id && p.tool_slug) node(p.node_id).tools.push(p.tool_slug);
+        if (p.node_id && p.tool_slug) {
+          const n = node(p.node_id);
+          n.tools.push(p.tool_slug);
+          n.steps.push({ label: `${p.tool_display_name ?? p.tool_slug} started`, done: false });
+        }
+        break;
+      case "tool.completed":
+        if (p.node_id && p.tool_slug) {
+          const n = node(p.node_id);
+          const open = n.steps.find((st) => !st.done && st.label.startsWith(p.tool_display_name ?? p.tool_slug ?? ""));
+          if (open) open.done = true;
+          n.steps.push({ label: p.tool_slug === "image_generation" ? "Image generated" : `${p.tool_display_name ?? p.tool_slug} completed`, done: true });
+        }
         break;
       case "artifact.preview":
         if (p.artifact_id && p.preview_url) {
@@ -81,7 +95,11 @@ export function deriveTimeline(events: EventOut[]): Timeline {
       case "artifact.created":
         if (p.artifact_id) {
           artifactIds.push(p.artifact_id);
-          if (p.node_id) node(p.node_id).artifacts.push(p.artifact_id);
+          if (p.node_id) {
+            const n = node(p.node_id);
+            n.artifacts.push(p.artifact_id);
+            n.steps.push({ label: `Artifact stored${p.output_summary ? ` · ${p.output_summary}` : ""}`, done: true });
+          }
           if (p.artifact_type === "image") for (const v of previews.values()) if (!v.final) { v.final = true; break; }
         }
         break;

@@ -125,7 +125,12 @@ async def test_partial_images_stream_and_final_image_is_an_artifact(app, client,
         streamed = "".join(
             e["payload"].get("delta") or "" for e in history if e["type"] == "response.streaming"
         )
-        assert "Generating image…" in streamed and "Here is your 4:5 poster." in streamed
+        assert "Here is your 4:5 poster." in streamed and "Generating image" not in streamed
+        # the provider's status line became application events (brief §14/§15)
+        tool_events = [
+            (e["type"], e["payload"]["tool_slug"]) for e in history if e["type"].startswith("tool.")
+        ]
+        assert tool_events == [("tool.started", "image_generation"), ("tool.completed", "image_generation")]
         assert [e["payload"]["artifact_type"] for e in history if e["type"] == "artifact.created"] == [
             "image"
         ]
@@ -133,6 +138,27 @@ async def test_partial_images_stream_and_final_image_is_an_artifact(app, client,
         reply = messages[-1]
         assert reply["role"] == "assistant" and reply["content"] == "Here is your 4:5 poster."
         assert len(reply["attachments"]) == 1 and reply["attachments"][0]["mime_type"] == "image/png"
+        assert (
+            reply["metadata_json"]["result_type"] == "native_result"
+            and "external_url" not in reply["metadata_json"]
+        )
+        assert reply["metadata_json"]["provider_response_id"] == "resp_img"
+        # brief §17: the generated image is now the conversation's current artifact
+        conv_out = (await admin.get(f"/api/v1/conversations/{conv['id']}")).json()
+        assert conv_out["current_artifact_id"] == reply["attachments"][0]["artifact_id"]
+        # brief §29: a follow-up without a new upload receives it automatically
+        calls.clear()
+        created2 = (
+            await admin.post(
+                f"/api/v1/conversations/{conv['id']}/runs", json={"content": "make the same design 4:5"}
+            )
+        ).json()
+        await drain(app)
+        run2 = (await admin.get(f"/api/v1/runs/{created2['run_id']}")).json()
+        assert run2["status"] == "SUCCEEDED", run2["error_json"]
+        assert [n["name"] for n in run2["nodes"]][3] == "Current design loaded"
+        assert calls[-1]["input"][-1]["content"][1]["type"] == "input_image"
+        assert calls[-1].get("previous_response_id") == "resp_img"
         # the user's own attachment is reported with its image type so the UI can render a thumbnail
         user_msg = next(m for m in messages if m["role"] == "user")
         assert (

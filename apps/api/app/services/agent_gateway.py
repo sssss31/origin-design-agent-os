@@ -48,21 +48,60 @@ class GatewayContext:
     session_native: bool = False
 
 
+NATIVE_RUNTIME = "openai_responses"  # the runtime that returns text/images/files to Origin
+
+
+def uses_native_runtime(agent: Agent) -> bool:
+    """Execution brief §3/§19: a ChatGPT Workspace agent answers inside Origin only in origin_native mode."""
+    return agent.connection_type == "chatgpt_workspace" and agent.execution_mode == "origin_native"
+
+
+def runtime_connection_type(agent: Agent) -> str:
+    return NATIVE_RUNTIME if uses_native_runtime(agent) else agent.connection_type
+
+
+def result_type_for(agent: Agent) -> str:
+    """external_result: the payload stays with the provider (workspace_trigger); native_result otherwise."""
+    return (
+        "external_result"
+        if agent.connection_type == "chatgpt_workspace" and not uses_native_runtime(agent)
+        else "native_result"
+    )
+
+
+async def _reveal(adapters: Adapters, ref: uuid.UUID | None, agent: Agent) -> str | None:
+    if not ref:
+        return None
+    try:
+        return await adapters.secrets.reveal(str(ref))
+    except LookupError as exc:
+        raise AgentCallError(
+            "agent_not_configured", f"{agent.name}: the stored credential cannot be read."
+        ) from exc
+
+
+async def native_connection(agent: Agent, adapters: Adapters) -> AgentConnection:
+    """The Origin Native runtime for this agent (its own instructions/model/key), whatever the mode."""
+    cfg = dict(agent.native_config or {})
+    return AgentConnection(
+        agent_slug=agent.slug,
+        agent_name=agent.name,
+        connection_type=NATIVE_RUNTIME,
+        endpoint=str(cfg.pop("api_base", "") or "") or None,
+        api_key=await _reveal(adapters, agent.native_api_key_secret_ref_id, agent),
+        config=cfg,
+    )
+
+
 async def resolve_connection(agent: Agent, adapters: Adapters) -> AgentConnection:
-    api_key: str | None = None
-    if agent.api_key_secret_ref_id:
-        try:
-            api_key = await adapters.secrets.reveal(str(agent.api_key_secret_ref_id))
-        except LookupError as exc:
-            raise AgentCallError(
-                "agent_not_configured", f"{agent.name}: the stored credential cannot be read."
-            ) from exc
+    if uses_native_runtime(agent):
+        return await native_connection(agent, adapters)
     return AgentConnection(
         agent_slug=agent.slug,
         agent_name=agent.name,
         connection_type=agent.connection_type,
         endpoint=agent.api_endpoint,
-        api_key=api_key,
+        api_key=await _reveal(adapters, agent.api_key_secret_ref_id, agent),
         config=dict(agent.connection_config or {}),
     )
 
@@ -170,7 +209,7 @@ async def call_agent(
     transport: Any = None,
 ) -> AgentReply:
     providers = build_existing_providers(settings, transport=transport)
-    provider = providers.get(agent.connection_type)
+    provider = providers.get(runtime_connection_type(agent))
     if provider is None:
         raise AgentCallError("agent_not_configured", f"{agent.name} has no supported connection type.")
     conn = await resolve_connection(agent, adapters)
@@ -212,3 +251,11 @@ async def test_agent_connection(
         return ConnectionTest(ok=False, message=f"unsupported connection type {agent.connection_type}")
     conn = await resolve_connection(agent, adapters)
     return await provider.test_connection(conn)
+
+
+async def test_native_runtime(
+    agent: Agent, adapters: Adapters, settings: Settings, *, transport: Any = None
+) -> ConnectionTest:
+    """Validates the native runtime's key/model without a run (admin → Test Native Agent)."""
+    provider = build_existing_providers(settings, transport=transport)[NATIVE_RUNTIME]
+    return await provider.test_connection(await native_connection(agent, adapters))

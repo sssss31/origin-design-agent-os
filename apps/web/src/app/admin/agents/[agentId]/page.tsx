@@ -5,17 +5,18 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { ConnectionForm, emptyDraft, type ConnectionDraft } from "@/components/admin/ConnectionForm";
-import { ConnectionBadge, RunBadge, typeLabel } from "@/components/admin/StatusBadge";
+import { ConnectionBadge, RunBadge, RuntimeBadge, typeLabel } from "@/components/admin/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { Badge, Card, CardTitle, EmptyState, ErrorText } from "@/components/ui/Card";
-import { Field, Input } from "@/components/ui/Input";
+import { Field, Input, Textarea } from "@/components/ui/Input";
 import { Tabs } from "@/components/ui/Tabs";
 import { agentsApi, consoleApi } from "@/lib/api/admin";
-import type { ActivityRunOut, AgentMessageTestOut, AgentOut, ProviderConnectionOut } from "@/types/admin";
+import type { ActivityRunOut, AgentMessageTestOut, AgentOut, ExecutionMode, NativeTestOut, ProviderConnectionOut } from "@/types/admin";
 
-type Tab = "connection" | "test" | "activity" | "settings";
+type Tab = "connection" | "runtime" | "test" | "activity" | "settings";
 const TABS: { id: Tab; label: string }[] = [
   { id: "connection", label: "Connection" },
+  { id: "runtime", label: "Runtime" },
   { id: "test", label: "Test" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
@@ -49,6 +50,7 @@ export default function AgentDetailPage() {
     <AdminShell title={`${agent.name} ${agent.command}`}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <ConnectionBadge agent={agent} />
+        <RuntimeBadge agent={agent} />
         <Badge tone={agent.status === "active" ? "success" : "neutral"}>{agent.status === "active" ? "enabled" : agent.status}</Badge>
         <span className="text-xs text-muted">{typeLabel(agent.connection?.connection_type)}{agent.connection?.api_endpoint ? ` · ${agent.connection.api_endpoint}` : ""}</span>
         {agent.connection?.connection_message && agent.connection.connection_status !== "unknown" ? <span className="text-xs text-faint">— {agent.connection.connection_message}</span> : null}
@@ -59,6 +61,7 @@ export default function AgentDetailPage() {
       <ErrorText>{error}</ErrorText>
       <div className="mt-3">
         {tab === "connection" ? <ConnectionTab agent={agent} isOrigin={isOrigin} mutate={mutate} draft={draft ?? emptyDraft(agent.connection)} setDraft={setDraft} /> : null}
+        {tab === "runtime" ? <RuntimeTab agent={agent} mutate={mutate} /> : null}
         {tab === "test" ? <TestTab agent={agent} onTested={load} /> : null}
         {tab === "activity" ? <ActivityTab agentId={agent.id} /> : null}
         {tab === "settings" ? <SettingsTab agent={agent} mutate={mutate} /> : null}
@@ -111,6 +114,129 @@ function ConnectionTab({ agent, isOrigin, mutate, draft, setDraft }: { agent: Ag
         {test ? <span className={`text-xs ${test.success ? "text-success" : "text-danger"}`}>{test.success ? "🟢" : "🔴"} {test.message} ({test.latency_ms} ms)</span> : null}
       </div>
     </Card>
+  );
+}
+
+/**
+ * Execution brief §8/§24/§25: which runtime answers inside Origin. A ChatGPT Workspace agent can keep
+ * running in ChatGPT (result stays there) or run through Origin's native runtime (text/images/files
+ * come back into this workspace). Native mode is only offered once the runtime has been tested.
+ */
+function RuntimeTab({ agent, mutate }: { agent: AgentOut; mutate: (fn: () => Promise<AgentOut>, msg: string) => Promise<void> }) {
+  const rt = agent.runtime;
+  const isWorkspace = agent.connection?.connection_type === "chatgpt_workspace";
+  const [mode, setMode] = useState<ExecutionMode>(rt?.execution_mode ?? "origin_native");
+  const [config, setConfig] = useState<Record<string, unknown>>(rt?.native_config ?? {});
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState<"save" | "test" | null>(null);
+  const [prompt, setPrompt] = useState("resize 16:9");
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<NativeTestOut | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+  const str = (k: string) => (config[k] == null ? "" : String(config[k]));
+  const set = (k: string, v: unknown) => setConfig((c) => { const n = { ...c }; if (v === "" || v == null) delete n[k]; else n[k] = v; return n; });
+  const imageGen = config.image_generation !== false;
+  if (!isWorkspace) {
+    return (
+      <Card>
+        <CardTitle>Runtime</CardTitle>
+        <p className="text-sm text-muted">This connection already returns its reply, images and files to Origin (<span className="font-mono">origin_native</span>). The Runtime tab only applies to ChatGPT Workspace Agents, whose API keeps the result inside ChatGPT.</p>
+      </Card>
+    );
+  }
+  const save = async (nextMode: ExecutionMode = mode) => {
+    setBusy("save");
+    await mutate(() => agentsApi.setRuntime(agent.id, { execution_mode: nextMode, native_config: config, native_api_key: key.trim() || undefined }), nextMode === "origin_native" ? "Runtime saved — this agent now answers inside Origin" : "Runtime saved");
+    setKey("");
+    setBusy(null);
+  };
+  const runTest = async () => {
+    setBusy("test");
+    setTestError(null);
+    setResult(null);
+    try {
+      if (key.trim() || JSON.stringify(config) !== JSON.stringify(rt?.native_config ?? {})) await save(mode);
+      setResult(await agentsApi.testNative(agent.id, prompt, file));
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : "Test failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const nativeReady = (rt?.native_configured || key.trim().length > 0) && Boolean(config.model || config.prompt_id);
+  return (
+    <div className="space-y-3">
+      <Card>
+        <CardTitle>Execution mode</CardTitle>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className={`cursor-pointer rounded-xl border p-3 ${mode === "workspace_trigger" ? "border-accent bg-accent-soft/40" : "border-border"}`}>
+            <span className="flex items-center gap-2 text-sm font-medium"><input type="radio" name="execution_mode" checked={mode === "workspace_trigger"} onChange={() => setMode("workspace_trigger")} /> Workspace Trigger</span>
+            <p className="mt-1 text-xs text-muted">Runs the existing Workspace Agent{rt?.workspace_agent_id ? <> (<span className="font-mono">{rt.workspace_agent_id}</span>)</> : null}. The result stays in ChatGPT — the Workspace Agents API returns status only, not the reply or its images.</p>
+          </label>
+          <label className={`cursor-pointer rounded-xl border p-3 ${mode === "origin_native" ? "border-accent bg-accent-soft/40" : "border-border"} ${!rt?.native_available && !nativeReady ? "opacity-60" : ""}`}>
+            <span className="flex items-center gap-2 text-sm font-medium"><input type="radio" name="execution_mode" checked={mode === "origin_native"} disabled={!rt?.native_available && !nativeReady} onChange={() => setMode("origin_native")} /> Origin Native</span>
+            <p className="mt-1 text-xs text-muted">Runs the agent through Origin&apos;s runtime (OpenAI Responses API) with the instructions below. Text, images and files come back directly into this workspace.{!rt?.native_available ? " Configure and test the native runtime first." : ""}</p>
+          </label>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Button disabled={busy !== null || (mode === "origin_native" && !nativeReady)} onClick={() => void save()}>{busy === "save" ? "Saving…" : mode === "origin_native" ? "Save & use Origin Native" : "Save"}</Button>
+          <span className="text-xs text-muted">Current: <span className="font-mono">{rt?.execution_mode}</span></span>
+        </div>
+      </Card>
+      <Card>
+        <CardTitle>Native runtime</CardTitle>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Model" hint="gpt-5 or gpt-4.1 (image generation needs one of these)"><Input value={str("model")} placeholder="gpt-5" onChange={(e) => set("model", e.target.value)} /></Field>
+          <Field label="OpenAI Platform API key" hint={rt?.native_configured ? `Configured · ${rt.native_api_key_preview} — leave empty to keep it` : "sk-… from platform.openai.com (billing on). Not a ChatGPT access token. Stored encrypted."}>
+            <Input type="password" autoComplete="off" value={key} placeholder={rt?.native_configured ? "Enter a new key to rotate" : "sk-…"} onChange={(e) => setKey(e.target.value)} />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Instructions" hint="The agent's approved instructions from ChatGPT, verbatim — this is what makes it the same agent.">
+              <Textarea rows={8} value={str("instructions")} placeholder="You are Resize2. Given a design and a target ratio…" onChange={(e) => set("instructions", e.target.value)} />
+            </Field>
+          </div>
+          <Field label="Image input" hint="Attached images are sent to the model as input"><p className="py-2 text-sm">ON</p></Field>
+          <Field label="Image generation" hint="Built-in image_generation tool; renders stream into the chat as they form">
+            <label className="flex items-center gap-2 py-2 text-sm"><input type="checkbox" checked={imageGen} onChange={(e) => set("image_generation", e.target.checked ? null : false)} /> {imageGen ? "ON" : "OFF"}</label>
+          </Field>
+          <Field label="Image size (optional)" hint="e.g. 1024x1536, 1536x1024, auto"><Input value={String((config.image_options as Record<string, unknown> | undefined)?.size ?? "")} placeholder="auto" onChange={(e) => { const opts = { ...((config.image_options as Record<string, unknown>) ?? {}) }; if (e.target.value) opts.size = e.target.value; else delete opts.size; set("image_options", Object.keys(opts).length ? opts : null); }} /></Field>
+          <Field label="Image quality (optional)" hint="low · medium · high · auto"><Input value={String((config.image_options as Record<string, unknown> | undefined)?.quality ?? "")} placeholder="auto" onChange={(e) => { const opts = { ...((config.image_options as Record<string, unknown>) ?? {}) }; if (e.target.value) opts.quality = e.target.value; else delete opts.quality; set("image_options", Object.keys(opts).length ? opts : null); }} /></Field>
+        </div>
+      </Card>
+      <Card>
+        <CardTitle>Test Native Agent</CardTitle>
+        <p className="mb-2 text-xs text-muted">Runs the native runtime once with an optional image. The actual image appears below — nothing is written to a chat. Switch to Origin Native only after this looks right.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Prompt"><Input value={prompt} onChange={(e) => setPrompt(e.target.value)} /></Field>
+          <Field label="Image (optional)"><input type="file" accept="image/*" className="block w-full text-xs text-muted" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Button variant="secondary" disabled={busy !== null || !nativeReady} onClick={() => void runTest()}>{busy === "test" ? "Running…" : "Test Native Agent"}</Button>
+          {!nativeReady ? <span className="text-xs text-muted">Add a model and an API key first.</span> : null}
+        </div>
+        {testError ? <ErrorText>{testError}</ErrorText> : null}
+        {result ? (
+          <div className="mt-3 rounded-xl border border-border bg-surface p-3 text-sm">
+            {result.ok ? (
+              <>
+                <p className="text-xs text-success">🟢 Completed in {(result.latency_ms / 1000).toFixed(1)}s{result.response_id ? ` · response ${result.response_id}` : ""}</p>
+                {result.text ? <p className="mt-2 whitespace-pre-wrap">{result.text}</p> : null}
+                {result.images.map((img) => (
+                  <div key={img.filename} className="mt-2 max-w-md overflow-hidden rounded-lg border border-border">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- inline data URL from the test endpoint */}
+                    <img src={img.data_url} alt={img.filename} className="block max-h-96 w-full object-contain bg-surface-2" />
+                    <p className="px-2 py-1 text-[11px] text-faint">{img.filename}{img.revised_prompt ? ` · ${img.revised_prompt}` : ""}</p>
+                  </div>
+                ))}
+                {!result.images.length && !result.text ? <p className="text-xs text-muted">The runtime answered without text or images.</p> : null}
+              </>
+            ) : (
+              <p className="text-xs text-danger">🔴 {result.error_message} ({result.error_code})</p>
+            )}
+          </div>
+        ) : null}
+      </Card>
+    </div>
   );
 }
 

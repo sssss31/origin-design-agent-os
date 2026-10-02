@@ -35,6 +35,9 @@ class AgentReply:
     files: list[ProducedFile] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     status: int | None = None
+    # set when the provider keeps the actual result elsewhere (ChatGPT Workspace Agents):
+    # Origin then shows an *external result*, never pretending it holds the payload
+    external_url: str | None = None
 
 
 OnDelta = Callable[[str], Awaitable[None]]

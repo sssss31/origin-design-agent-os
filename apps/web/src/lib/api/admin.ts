@@ -1,13 +1,19 @@
 import { API_BASE, api } from "@/lib/api/client";
 import { tokenStore } from "@/lib/token-store";
-import type { ActivityRunOut, AgentMessageTestOut, OrgSettingsOut, OverviewOut,
+import type {
+  ActivityRunOut,
   AgentImportOut,
+  AgentMessageTestOut,
   AgentOut,
   AgentSummaryOut,
   AgentTestOut,
   AgentVersionInput,
   CommandOut,
+  ExecutionMode,
   ModelCapabilities,
+  NativeTestOut,
+  OrgSettingsOut,
+  OverviewOut,
   ProviderConnectionOut,
   ProviderCurlPreview,
   ProviderImportOut,
@@ -89,6 +95,22 @@ export const agentsApi = {
     api<AgentOut>(`${A}/agents/${id}/connection`, { method: "PUT", body }),
   testConnection: (id: string) => api<ProviderConnectionOut>(`${A}/agents/${id}/test-connection`, { method: "POST" }),
   testMessage: (id: string, message: string) => api<AgentMessageTestOut>(`${A}/agents/${id}/test-message`, { method: "POST", body: { message } }),
+  setRuntime: (id: string, body: { execution_mode: ExecutionMode; native_config?: Record<string, unknown>; native_api_key?: string; clear_native_api_key?: boolean }) =>
+    api<AgentOut>(`${A}/agents/${id}/runtime`, { method: "PUT", body }),
+  async testNative(id: string, prompt: string, file: File | null): Promise<NativeTestOut> {
+    const form = new FormData();
+    form.append("prompt", prompt);
+    if (file) form.append("file", file);
+    const headers: Record<string, string> = {};
+    const token = tokenStore.getAccessToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const org = tokenStore.getOrganizationId();
+    if (org) headers["X-Organization-Id"] = org;
+    const res = await fetch(`${API_BASE}${A}/agents/${id}/test-native`, { method: "POST", headers, body: form });
+    const data = (await res.json()) as unknown;
+    if (!res.ok) throw new Error((data as { error?: { message?: string } }).error?.message ?? "Test failed");
+    return data as NativeTestOut;
+  },
   activity: (id: string, limit = 25) => api<ActivityRunOut[]>(`${A}/activity?agent_id=${id}&limit=${limit}`),
   remove: (id: string) => api<void>(`${A}/agents/${id}`, { method: "DELETE" }),
   seedRegistry: (connection_type: "openai_responses" | "http") => api<{ created: number; skipped: number; commands: string[] }>(`${A}/seed/agent-registry`, { method: "POST", body: { connection_type } }),

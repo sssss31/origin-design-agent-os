@@ -77,7 +77,8 @@ async def test_trigger_then_poll_until_completed() -> None:
     assert calls[0]["beta"] == "workspace_agent_runs=v1"
     assert calls[0]["body"] == {"input": "Resize the banner", "conversation_key": "origin-conv-1"}
     assert calls[-1]["path"] == "/v1/workspace_agents/agtch_abc123/runs/apirun_1"
-    assert "finished the run" in reply.text and "https://chatgpt.com/c/123" in reply.text
+    # the payload stays in ChatGPT: the reply says so and carries the link separately (external result)
+    assert "finished the run" in reply.text and reply.external_url == "https://chatgpt.com/c/123"
     assert reply.session_id == "origin-conv-1"  # follow-ups keep the same ChatGPT conversation
     assert any("in_progress" in d for d in deltas) and any("completed" in d for d in deltas)
 

@@ -41,7 +41,13 @@ from app.ports.tools import ToolCall, ToolSpec
 from app.providers.base import ProviderError
 from app.providers.existing.base import AgentCallError
 from app.services.agent_factory import build_runtime_agent
-from app.services.agent_gateway import call_agent, load_context, prepare_files
+from app.services.agent_gateway import (
+    call_agent,
+    load_context,
+    prepare_files,
+    result_type_for,
+    runtime_connection_type,
+)
 from app.services.artifacts import ArtifactService
 from app.services.context import build_context
 from app.services.conversations import ConversationService
@@ -908,8 +914,25 @@ class RunExecutor:
         buffer: list[str] = []
         pending = 0
 
+        image_tool_started = False
+
         async def on_delta(delta: str) -> None:
-            nonlocal pending
+            nonlocal pending, image_tool_started
+            if delta.startswith("Generating image") and not image_tool_started:
+                # the provider's own status line → an application event the process view can show
+                image_tool_started = True
+                await recorder.add(
+                    EventType.TOOL_STARTED,
+                    SafeEventPayload(
+                        node_id=node.node_id,
+                        agent_slug=agent.slug,
+                        tool_slug="image_generation",
+                        tool_display_name="Image generation",
+                    ),
+                    node_run_id=node.id,
+                )
+                await recorder.commit()
+                return
             buffer.append(delta)
             pending += len(delta)
             if pending >= 48:  # small chunks so the reply streams like a chatbot; each is a durable event
@@ -986,12 +1009,16 @@ class RunExecutor:
         )
         # always keep one row per (conversation, agent): it carries the turn counter shown in
         # the composer and, when the provider returned one, the native session id
+        runtime_type = runtime_connection_type(agent)
+        runtime_cfg = (
+            agent.native_config if runtime_type != agent.connection_type else agent.connection_config
+        )
         if agent_session is None:
             agent_session = AgentSession(
                 conversation_id=run.conversation_id,
                 agent_id=agent.id,
-                provider_type=agent.connection_type,
-                model=str((agent.connection_config or {}).get("model") or agent.connection_type),
+                provider_type=runtime_type,
+                model=str((runtime_cfg or {}).get("model") or runtime_type),
                 input_list=[],
                 turns=0,
                 chars=0,
@@ -1003,6 +1030,18 @@ class RunExecutor:
         agent_session.chars = (agent_session.chars or 0) + len(reply.text or "")
         artifact_service = ArtifactService(session, None, self.adapters.storage)
         produced: list[uuid.UUID] = []
+        if image_tool_started or any(f.artifact_type == "image" for f in reply.files):
+            await recorder.add(
+                EventType.TOOL_COMPLETED,
+                SafeEventPayload(
+                    node_id=node.node_id,
+                    agent_slug=agent.slug,
+                    tool_slug="image_generation",
+                    tool_display_name="Image generation",
+                    output_summary=f"{sum(1 for f in reply.files if f.artifact_type == 'image')} image(s)",
+                ),
+                node_run_id=node.id,
+            )
         for file in reply.files:
             art, av = await artifact_service.persist_produced(
                 file,
@@ -1031,9 +1070,9 @@ class RunExecutor:
             session,
             UsageContext(
                 organization_id=run.organization_id,
-                provider_type=agent.connection_type,
+                provider_type=runtime_type,
                 provider_id=None,
-                model=str((agent.connection_config or {}).get("model") or agent.connection_type),
+                model=str((runtime_cfg or {}).get("model") or runtime_type),
                 run_id=run.id,
                 node_run_id=node.id,
                 agent_id=agent.id,
@@ -1052,10 +1091,17 @@ class RunExecutor:
             "session_native": gw_ctx.session_native,
             "warnings": list(reply.usage.get("warnings", [])),
             "usage": {k: v for k, v in reply.usage.items() if isinstance(v, int | float | bool)},
+            # normalized result (brief §11): what Origin actually holds vs. what stayed with the provider
+            "result_type": result_type_for(agent),
+            "external_url": reply.external_url,
+            "provider_response_id": reply.session_id,
+            "runtime": runtime_type,
         }
         run.result_json = {
             **run.result_json,
             "output_text": reply.text,
+            "result_type": result_type_for(agent),
+            "external_url": reply.external_url,
             "last_agent": agent.slug,
             "artifact_ids": list(
                 dict.fromkeys(run.result_json.get("artifact_ids", []) + [str(a) for a in produced])
@@ -1220,6 +1266,19 @@ class RunExecutor:
             last_agent_id, last_version_id = n.agent_id, n.agent_version_id
         content = "\n\n".join(parts) or "(no output)"
         agent = await session.get(Agent, last_agent_id) if last_agent_id else None
+        last = agent_nodes[-1].output_json if agent_nodes else {}
+        result_type = str(last.get("result_type") or "native_result")
+        metadata: dict[str, Any] = {
+            "nodes": len(agent_nodes),
+            "result_type": result_type,
+            **({"agent_name": agent.name} if agent else {}),
+            **({"external_url": last["external_url"]} if last.get("external_url") else {}),
+            **(
+                {"provider_response_id": last["provider_response_id"]}
+                if last.get("provider_response_id")
+                else {}
+            ),
+        }
         await ConversationService(session, None).add_assistant_message(
             conversation.id,
             content=content,
@@ -1227,8 +1286,11 @@ class RunExecutor:
             agent_version_id=last_version_id,
             run_id=run.id,
             artifact_ids=list(dict.fromkeys(artifact_ids)),
-            metadata={"nodes": len(agent_nodes), **({"agent_name": agent.name} if agent else {})},
+            metadata=metadata,
         )
+        if artifact_ids:
+            # brief §17: the newest result becomes the conversation's current artifact for follow-ups
+            conversation.current_artifact_id = list(dict.fromkeys(artifact_ids))[-1]
         run.result_json = {
             **run.result_json,
             "output_text": content,

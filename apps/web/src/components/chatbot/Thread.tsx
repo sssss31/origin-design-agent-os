@@ -1,7 +1,7 @@
 "use client";
 
-import { Check, ChevronDown, Copy, Paperclip, RotateCcw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, Copy, ExternalLink, Paperclip, RotateCcw } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { ArtifactCard, AttachmentThumb, PreviewImage } from "@/components/chatbot/ArtifactCard";
 import { Markdown } from "@/components/chatbot/Markdown";
 import type { PendingMessage } from "@/components/chatbot/useConversation";
@@ -48,6 +48,20 @@ function SystemEvent({ message }: { message: MessageOut }) {
   );
 }
 
+/**
+ * Execution brief §20/§21: a Workspace-trigger run finished, but its payload stayed with the provider.
+ * Shown as what it is — an external result — never as if Origin held the output.
+ */
+function ExternalResult({ text, url, agentName }: { text: string; url: string | null; agentName: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-surface px-4 py-3 text-sm">
+      <p className="font-medium">{text}</p>
+      <p className="mt-1 text-xs text-muted">The result stays in ChatGPT: this agent runs in <span className="font-mono">workspace_trigger</span> mode and the Workspace Agents API returns status only. Switch {agentName} to Origin Native (Admin → Agents → Runtime) to get the reply and images here.</p>
+      {url ? <a href={url} target="_blank" rel="noreferrer noopener" className="mt-2 inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-surface-2">Open in ChatGPT <ExternalLink size={12} /></a> : null}
+    </div>
+  );
+}
+
 function Avatar({ name }: { name: string }) {
   return <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent">{name.slice(0, 1).toUpperCase()}</span>;
 }
@@ -61,11 +75,11 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+// Origin's own lifecycle steps are named by the server ("Resize2 selected", "Source image loaded");
+// only the generic ones are relabelled here
 const NODE_LABELS: Record<string, string> = {
   request: "Request received",
-  select: "Agent selected",
   context: "Conversation context loaded",
-  files: "Files prepared",
   save: "Response saved",
 };
 
@@ -97,12 +111,20 @@ function Process({ timeline, agentName, providerLines, running }: { timeline: Ti
         <ul className="mt-1 space-y-0.5 border-l border-border pl-3">
           {nodes.length === 0 ? <li className="text-faint">● Request sent, waiting for the agent…</li> : null}
           {nodes.map((n) => (
-            <li key={n.id} className="flex items-center gap-2">
-              <span className={n.status === "SUCCEEDED" ? "text-success" : n.status === "FAILED" ? "text-danger" : n.status === "RUNNING" ? "text-accent" : "text-faint"}>{n.status === "SUCCEEDED" ? "✓" : n.status === "FAILED" ? "✕" : n.status === "RUNNING" ? "●" : "○"}</span>
-              <span>{label(n.id, n.name)}</span>
-              {n.durationMs != null ? <span className="text-faint">{(n.durationMs / 1000).toFixed(1)}s</span> : null}
-              {n.error ? <span className="text-danger">— {n.error}</span> : null}
-            </li>
+            <Fragment key={n.id}>
+              <li className="flex items-center gap-2">
+                <span className={n.status === "SUCCEEDED" ? "text-success" : n.status === "FAILED" ? "text-danger" : n.status === "RUNNING" ? "text-accent" : "text-faint"}>{n.status === "SUCCEEDED" ? "✓" : n.status === "FAILED" ? "✕" : n.status === "RUNNING" ? "●" : "○"}</span>
+                <span>{label(n.id, n.name)}</span>
+                {n.durationMs != null ? <span className="text-faint">{(n.durationMs / 1000).toFixed(1)}s</span> : null}
+                {n.error ? <span className="text-danger">— {n.error}</span> : null}
+              </li>
+              {n.steps.map((st, i) => (
+                <li key={`${n.id}-s${i}`} className="flex items-center gap-2 pl-4">
+                  <span className={st.done ? "text-success" : "text-accent"}>{st.done ? "✓" : "●"}</span>
+                  <span>{st.label}</span>
+                </li>
+              ))}
+            </Fragment>
           ))}
           {providerLines.map((l, i) => (
             <li key={`p-${i}`} className="flex items-center gap-2 text-faint"><span>│</span><span>{l}</span></li>
@@ -156,8 +178,14 @@ export function Thread({
               <div className="min-w-0 flex-1">
                 <p className="mb-1 text-xs font-medium text-muted">{m.agent_name ?? "Agent"} {m.agent_command ? <span className="font-mono text-accent">{m.agent_command}</span> : null}</p>
                 {doneProcess && m.id === lastAssistant?.id ? <div className="mb-2"><Process timeline={doneProcess} agentName={m.agent_name ?? agentName} providerLines={[]} running={false} /></div> : null}
-                <Markdown text={m.content} />
-                {m.attachments.filter((a) => a.artifact_id).map((a) => <ArtifactCard key={a.artifact_id} attachment={a} />)}
+                {m.metadata_json.result_type === "external_result" ? (
+                  <ExternalResult text={m.content} url={typeof m.metadata_json.external_url === "string" ? m.metadata_json.external_url : null} agentName={m.agent_name ?? agentName} />
+                ) : (
+                  <>
+                    <Markdown text={m.content} />
+                    {m.attachments.filter((a) => a.artifact_id).map((a) => <ArtifactCard key={a.artifact_id} attachment={a} />)}
+                  </>
+                )}
                 <div className="mt-1 flex items-center gap-1">
                   <CopyButton text={m.content} />
                 </div>

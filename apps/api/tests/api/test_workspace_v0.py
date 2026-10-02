@@ -158,7 +158,7 @@ async def test_v0_definition_of_done(app, client, make_user, monkeypatch) -> Non
             "Request received",
             "Resize Agent selected",
             "Conversation context loaded",
-            "Files prepared",
+            "Source image loaded",
             "Resize Agent processing",
             "Output saved",
         ]

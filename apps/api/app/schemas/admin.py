@@ -513,6 +513,46 @@ class AgentConnectionOut(BaseModel):
     connection_tested_at: datetime | None
 
 
+ExecutionMode = Literal["origin_native", "workspace_trigger"]
+
+
+class AgentRuntimeIn(BaseModel):
+    """Execution brief §3/§8: which runtime answers in Origin, plus the native runtime's configuration."""
+
+    execution_mode: ExecutionMode
+    native_config: dict[str, Any] = Field(default_factory=dict)
+    native_api_key: str | None = Field(
+        default=None, min_length=8, max_length=50_000, description="write-only"
+    )
+    clear_native_api_key: bool = False
+
+
+class AgentRuntimeOut(BaseModel):
+    execution_mode: ExecutionMode
+    native_config: dict[str, Any]
+    native_configured: bool
+    native_api_key_preview: str | None
+    workspace_agent_id: str | None
+    native_available: bool  # a key and a model exist, so origin_native can be switched on
+
+
+class NativeTestImageOut(BaseModel):
+    filename: str
+    mime_type: str
+    data_url: str  # inline for the admin panel only; chat results go through artifacts
+    revised_prompt: str | None = None
+
+
+class NativeTestOut(BaseModel):
+    ok: bool
+    text: str | None
+    images: list[NativeTestImageOut] = Field(default_factory=list)
+    latency_ms: int
+    response_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 class AgentSummaryOut(ORMModel):
     id: uuid.UUID
     organization_id: uuid.UUID
@@ -529,6 +569,7 @@ class AgentSummaryOut(ORMModel):
     has_draft: bool = False
     model: str | None = None
     connection: AgentConnectionOut | None = None
+    runtime: AgentRuntimeOut | None = None
 
 
 class AgentOut(AgentSummaryOut):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from collections.abc import Sequence
@@ -29,6 +30,7 @@ from app.schemas.admin import (
     AgentConnectionIn,
     AgentCreate,
     AgentCurlImportIn,
+    AgentRuntimeIn,
     AgentTestOut,
     AgentTestRequest,
     AgentUpdate,
@@ -830,6 +832,15 @@ async def set_agent_connection(
     agent.connection_type = data.connection_type
     agent.api_endpoint = data.api_endpoint
     agent.connection_config = data.config
+    if data.connection_type == "chatgpt_workspace":
+        m = re.search(r"agtch_[A-Za-z0-9_-]+", data.api_endpoint or "")
+        agent.workspace_agent_id = m.group(0) if m else agent.workspace_agent_id
+        if before["connection_type"] != "chatgpt_workspace" and agent.native_api_key_secret_ref_id is None:
+            agent.execution_mode = (
+                "workspace_trigger"  # until an admin configures and tests the native runtime
+            )
+    else:
+        agent.execution_mode = "origin_native"  # these connections already return their payload to Origin
     if data.clear_api_key and agent.api_key_secret_ref_id:
         await adapters.secrets.delete(str(agent.api_key_secret_ref_id))
         agent.api_key_secret_ref_id = None
@@ -932,3 +943,76 @@ async def list_commands(session: AsyncSession, organization_id: uuid.UUID) -> li
         .order_by(Agent.command)
     )
     return list(rows.all())
+
+
+async def set_agent_runtime(
+    session: AsyncSession, ctx: AuthContext, agent_id: uuid.UUID, data: AgentRuntimeIn, adapters: Adapters
+) -> Agent:
+    """Execution brief §3/§8/§24: choose the runtime and store the native configuration (key encrypted)."""
+    from app.ports.secrets import key_preview
+    from app.providers.existing.chatgpt_workspace import credential_problem
+
+    svc = AgentService(session, ctx)
+    agent = await svc.get(agent_id)
+    before = {
+        "execution_mode": agent.execution_mode,
+        "native_api_key_preview": agent.native_api_key_preview,
+        "model": (agent.native_config or {}).get("model"),
+    }
+    cfg = {
+        k: v
+        for k, v in dict(data.native_config).items()
+        if "key" not in k.lower() and "secret" not in k.lower()
+    }
+    agent.native_config = cfg
+    if data.clear_native_api_key and agent.native_api_key_secret_ref_id:
+        await adapters.secrets.delete(str(agent.native_api_key_secret_ref_id))
+        agent.native_api_key_secret_ref_id = None
+        agent.native_api_key_preview = None
+    if data.native_api_key:
+        value = ProviderService.normalize_key(data.native_api_key)
+        if value.startswith("at-") or value.startswith("token_"):
+            raise ValidationFailed(
+                "The native runtime needs an OpenAI Platform API key (sk-…), not a ChatGPT access token.",
+                code="invalid_api_key",
+            )
+        if credential_problem(value) and not value.startswith("sk-"):
+            raise ValidationFailed(
+                "This does not look like an OpenAI Platform API key.", code="invalid_api_key"
+            )
+        if agent.native_api_key_secret_ref_id:
+            handle = await adapters.secrets.rotate(str(agent.native_api_key_secret_ref_id), value)
+        else:
+            handle = await adapters.secrets.store(f"agent-native:{agent.slug}", value)
+            agent.native_api_key_secret_ref_id = uuid.UUID(handle.ref)
+        agent.native_api_key_preview = key_preview(value)
+    if data.execution_mode == "workspace_trigger" and agent.connection_type != "chatgpt_workspace":
+        raise ValidationFailed(
+            "Workspace Trigger is only available for ChatGPT Workspace Agent connections.",
+            code="invalid_execution_mode",
+        )
+    if data.execution_mode == "origin_native" and agent.connection_type == "chatgpt_workspace":
+        problems: list[str] = []
+        if agent.native_api_key_secret_ref_id is None:
+            problems.append("an OpenAI Platform API key")
+        if not (cfg.get("model") or cfg.get("prompt_id")):
+            problems.append("a model (e.g. gpt-5)")
+        if problems:
+            raise ValidationFailed(
+                "Origin Native needs " + " and ".join(problems) + " before it can be switched on.",
+                code="native_not_configured",
+            )
+    agent.execution_mode = data.execution_mode
+    agent.updated_by = ctx.user_id
+    await session.flush()
+    await svc._audit(
+        "agent.runtime_set",
+        agent.id,
+        before=before,
+        after={
+            "execution_mode": agent.execution_mode,
+            "native_api_key_preview": agent.native_api_key_preview,
+            "model": cfg.get("model"),
+        },
+    )
+    return await svc.get(agent.id)

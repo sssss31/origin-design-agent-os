@@ -15,6 +15,7 @@ from app.models.tools import Tool, ToolVersion
 from app.schemas.admin import (
     AgentConnectionOut,
     AgentOut,
+    AgentRuntimeOut,
     AgentSummaryOut,
     AgentVersionOut,
     CommandOut,
@@ -124,12 +125,30 @@ def connection_out(a: Agent) -> AgentConnectionOut:
     )
 
 
+def runtime_out(a: Agent) -> AgentRuntimeOut:
+    cfg = {
+        k: v
+        for k, v in (a.native_config or {}).items()
+        if "key" not in k.lower() and "secret" not in k.lower()
+    }
+    has_key = a.native_api_key_secret_ref_id is not None
+    return AgentRuntimeOut(
+        execution_mode=a.execution_mode,
+        native_config=cfg,
+        native_configured=has_key,
+        native_api_key_preview=a.native_api_key_preview,
+        workspace_agent_id=a.workspace_agent_id,
+        native_available=has_key and bool(cfg.get("model") or cfg.get("prompt_id")),
+    )
+
+
 def agent_summary_out(a: Agent) -> AgentSummaryOut:
     active = next((v for v in a.versions if v.id == a.active_version_id), None)
     return from_orm(
         AgentSummaryOut,
         a,
         connection=connection_out(a),
+        runtime=runtime_out(a),
         active_version_number=active.version if active else None,
         has_draft=any(v.published_at is None for v in a.versions),
         model=active.model if active else next((v.model for v in a.versions if v.published_at is None), None),

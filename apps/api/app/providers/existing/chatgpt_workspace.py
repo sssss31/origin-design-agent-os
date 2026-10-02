@@ -211,23 +211,17 @@ class ChatGPTWorkspaceAgent:
             raise AgentCallError(
                 "agent_unavailable", f"{conn.agent_name} is unreachable. Retry.", retryable=True
             ) from exc
-        link = f"[Open in ChatGPT]({url})" if url else "Open the agent in ChatGPT to see the result."
         if status == "completed":
-            text = (
-                f"✅ **{conn.agent_name} finished the run in ChatGPT.** {link}\n\n"
-                "The result (text and any images) is in that ChatGPT conversation — the Workspace Agents API "
-                "does not return it here. For images that render inside this chat, connect the agent as an "
-                "OpenAI GPT agent (Responses API)."
-            )
+            text = f"{conn.agent_name} finished the run in ChatGPT."
         elif status in ("queued", "in_progress", "suspended"):
-            text = (
-                f"⏳ **{conn.agent_name} is still working in ChatGPT** (status: {status}). {link}\n\n"
-                "Workspace Agents deliver their answer inside ChatGPT or the agent's configured destination; "
-                "the API does not return the reply text."
-            )
+            text = f"{conn.agent_name} is still working in ChatGPT (status: {status})."
         else:
-            text = f"{conn.agent_name}: run status {status}. {link}"
-        return AgentReply(text=text, session_id=conversation_key, status=res.status_code)
+            text = f"{conn.agent_name}: run status {status}."
+        if not url:
+            text += " Open the agent in ChatGPT to see the result."
+        return AgentReply(
+            text=text, session_id=conversation_key, status=res.status_code, external_url=url or None
+        )
 
     async def test_connection(self, conn: AgentConnection) -> ConnectionTest:
         problems = self.validate_config(conn)

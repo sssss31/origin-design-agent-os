@@ -19,7 +19,8 @@ from app.domain.events import EventType, SafeEventPayload
 from app.domain.roles import Role
 from app.domain.run_state import NodeState, RunState, assert_run_transition
 from app.domain.slash import parse_message
-from app.models.chat import Conversation, Message
+from app.models.chat import Conversation, Message, MessageAttachment
+from app.models.files import Artifact, Asset
 from app.models.identity import Organization
 from app.models.workflows import ExecutionEvent, NodeRun, WorkflowRun
 from app.ports.queue import Job
@@ -52,7 +53,7 @@ def plan_for(agent_slug: str, agent_name: str, *, is_manager: bool) -> list[dict
     ]
 
 
-def plan_for_existing(agent_slug: str, agent_name: str) -> list[dict]:
+def plan_for_existing(agent_slug: str, agent_name: str, *, files_label: str = "Files prepared") -> list[dict]:
     """Workspace V0 §15: request → command → agent → context → files → agent processing → saved."""
     return [
         {"id": "request", "name": "Request received", "kind": "parse", "index": 0},
@@ -64,7 +65,7 @@ def plan_for_existing(agent_slug: str, agent_name: str) -> list[dict]:
             "agent_slug": agent_slug,
         },
         {"id": "context", "name": "Conversation context loaded", "kind": "context", "index": 2},
-        {"id": "files", "name": "Files prepared", "kind": "files", "index": 3},
+        {"id": "files", "name": files_label, "kind": "files", "index": 3},
         {
             "id": f"gateway:{agent_slug}",
             "name": f"{agent_name} processing",
@@ -77,6 +78,34 @@ def plan_for_existing(agent_slug: str, agent_name: str) -> list[dict]:
 
 
 class RunService:
+    async def _attachment_kinds(self, asset_ids: list[str], artifact_ids: list[str]) -> list[str]:
+        kinds: list[str] = []
+        if asset_ids:
+            rows = (
+                await self.session.scalars(
+                    select(Asset)
+                    .options(selectinload(Asset.versions))
+                    .where(Asset.id.in_([uuid.UUID(a) for a in asset_ids]))
+                )
+            ).all()
+            for a in rows:
+                v = next((x for x in a.versions if x.id == a.current_version_id), None)
+                if v:
+                    kinds.append(v.mime_type)
+        if artifact_ids:
+            rows2 = (
+                await self.session.scalars(
+                    select(Artifact)
+                    .options(selectinload(Artifact.versions))
+                    .where(Artifact.id.in_([uuid.UUID(a) for a in artifact_ids]))
+                )
+            ).all()
+            for art in rows2:
+                av = next((x for x in art.versions if x.id == art.current_version_id), None)
+                if av:
+                    kinds.append(av.mime_type)
+        return kinds
+
     def __init__(
         self, session: AsyncSession, ctx: AuthContext, adapters: Adapters, settings: Settings
     ) -> None:
@@ -210,6 +239,36 @@ class RunService:
             conv.active_agent_id = route.agent.id  # whoever answered stays the active agent
         elif route.command == "/auto" or route.agent.is_manager:
             conv.active_agent_id = None
+        selected_assets = [str(a) for a in data.selected_asset_ids] or [
+            str(a.asset_id) for a in message.attachments if a.asset_id
+        ]
+        selected_artifacts = [str(a) for a in data.selected_artifact_ids] or [
+            str(a.artifact_id) for a in message.attachments if a.artifact_id
+        ]
+        context_artifact = False
+        if not selected_assets and not selected_artifacts and route.agent.connection_type != "origin":
+            # brief §16/§17: a follow-up ("make this 4:5") works on the conversation's current artifact,
+            # or on the last file the user attached, without re-uploading
+            if conv.current_artifact_id:
+                selected_artifacts = [str(conv.current_artifact_id)]
+                context_artifact = True
+            else:
+                previous = await self.session.scalar(
+                    select(MessageAttachment.asset_id)
+                    .join(Message, Message.id == MessageAttachment.message_id)
+                    .where(Message.conversation_id == conv.id, MessageAttachment.asset_id.is_not(None))
+                    .order_by(Message.created_at.desc())
+                    .limit(1)
+                )
+                if previous:
+                    selected_assets = [str(previous)]
+                    context_artifact = True
+        files_label = "Files prepared"
+        if selected_assets or selected_artifacts:
+            files_label = "Current design loaded" if context_artifact else "Source file loaded"
+            kinds = await self._attachment_kinds(selected_assets, selected_artifacts)
+            if kinds and all(k.startswith("image/") for k in kinds):
+                files_label = "Current design loaded" if context_artifact else "Source image loaded"
         run = WorkflowRun(
             organization_id=org_id,
             workspace_id=access.workspace.id,
@@ -220,7 +279,7 @@ class RunService:
             command=route.command,
             user_input=parsed.body or message.content,
             entry_agent_id=route.agent.id,
-            plan_json=plan_for_existing(route.agent.slug, route.agent.name)
+            plan_json=plan_for_existing(route.agent.slug, route.agent.name, files_label=files_label)
             if route.agent.connection_type != "origin"
             else plan_for(
                 route.agent.slug,
@@ -228,10 +287,9 @@ class RunService:
                 is_manager=route.agent.is_manager and not route.explicit or route.agent.is_manager,
             ),
             input_json={
-                "selected_asset_ids": [str(a) for a in data.selected_asset_ids]
-                or [str(a.asset_id) for a in message.attachments if a.asset_id],
-                "selected_artifact_ids": [str(a) for a in data.selected_artifact_ids]
-                or [str(a.artifact_id) for a in message.attachments if a.artifact_id],
+                "selected_asset_ids": selected_assets,
+                "selected_artifact_ids": selected_artifacts,
+                "context_artifact": context_artifact,
                 "options": data.options,
                 "body": parsed.body,
                 "explicit": route.explicit,

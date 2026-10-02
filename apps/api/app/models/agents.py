@@ -72,6 +72,28 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, AuditedMixin, Base):
     connection_status: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
     connection_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     connection_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # --- which runtime answers inside Origin (execution architecture brief §3, §19) --------
+    execution_mode: Mapped[str] = mapped_column(
+        String(20),
+        default="origin_native",
+        server_default="origin_native",
+        nullable=False,
+        comment="origin_native (Origin receives the payload) | workspace_trigger (ChatGPT keeps the result)",
+    )
+    native_config: Mapped[dict] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default="{}",
+        nullable=False,
+        comment="native runtime: model, instructions, image_generation, image_options, …",
+    )
+    native_api_key_secret_ref_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("secret_refs.id", ondelete="SET NULL"), nullable=True
+    )
+    native_api_key_preview: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    workspace_agent_id: Mapped[str | None] = mapped_column(
+        String(80), nullable=True, comment="agtch_… id of the ChatGPT Workspace Agent, if any"
+    )
     is_manager: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, comment="routes /auto and plain messages"
     )
