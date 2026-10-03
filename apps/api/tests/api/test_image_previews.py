@@ -110,7 +110,9 @@ async def test_partial_images_stream_and_final_image_is_an_artifact(app, client,
         # the request carried the attached image and the image tool with partial renders
         body = calls[-1]
         assert body["input"][-1]["content"][1]["type"] == "input_image"
-        assert {"type": "image_generation", "partial_images": 2, "size": "1024x1536"} in body["tools"]  # "make it 4:5"
+        assert {"type": "image_generation", "partial_images": 2, "size": "1024x1536"} in body[
+            "tools"
+        ]  # "make it 4:5"
 
         history = (await admin.get(f"/api/v1/runs/{created['run_id']}/events/history")).json()
         previews = [e for e in history if e["type"] == "artifact.preview"]

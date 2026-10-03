@@ -322,7 +322,9 @@ async def test_openai_responses_streams_partial_images_and_enables_the_image_too
         on_preview=on_preview,
     )
     tools = seen["body"]["tools"]
-    assert tools == [{"type": "image_generation", "partial_images": 2, "size": "1024x1536"}]  # "make it 4:5" → portrait
+    assert tools == [
+        {"type": "image_generation", "partial_images": 2, "size": "1024x1536"}
+    ]  # "make it 4:5" → portrait
     assert seen["body"]["input"][-1]["content"][1]["type"] == "input_image"
     assert "Generating image…\n" in deltas and deltas.count("Generating image…\n") == 1
     assert [p.metadata["index"] for p in previews] == [0, 1] and previews[0].metadata["item_id"] == "ig_1"

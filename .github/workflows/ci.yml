@@ -53,5 +53,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Security — npm audit
+      - name: Security — npm audit (production dependencies)
+        run: npm audit --audit-level=high --omit=dev
+      - name: Security — npm audit (all dependencies, informational)
+        # dev-only advisories (e.g. braces via eslint-config-next, GHSA-vfj7-8cjw-p6xm with no patched
+        # release) do not ship and must not block deploys; they stay visible here
         run: npm audit --audit-level=high
+        continue-on-error: true
