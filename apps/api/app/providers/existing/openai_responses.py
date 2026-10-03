@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 
 from app.core.logging import get_logger, redact
+from app.domain.image_sizes import target_size_for
 from app.ports.runner import ProducedFile
 from app.providers.base import ConnectionTest
 from app.providers.existing.base import (
@@ -159,8 +160,26 @@ class OpenAIResponsesAgent:
                 "type": "image_generation",
                 "partial_images": int(cfg.get("partial_images", 2)),
             }
+            # Resize2-style configuration (brief §2): the image model, whether the tool should edit the
+            # source or generate, and the quality — all server-side settings, never from the browser
+            if cfg.get("image_model"):
+                tool["model"] = str(cfg["image_model"])
+            if cfg.get("image_action"):
+                tool["action"] = str(cfg["image_action"])
+            if cfg.get("image_quality"):
+                tool["quality"] = str(cfg["image_quality"])
             if isinstance(cfg.get("image_options"), dict):
                 tool.update(cfg["image_options"])  # size, quality, output_format, background, …
+            # brief §5: the requested ratio decides the output size unless an admin pinned one
+            target = (
+                target_size_for(message, image_model=tool.get("model"))
+                if cfg.get("size_from_request", True)
+                else None
+            )
+            if target and not (
+                isinstance(cfg.get("image_options"), dict) and cfg["image_options"].get("size")
+            ):
+                tool["size"] = target.size
             tools.append(tool)
         if tools:
             body["tools"] = tools
@@ -277,13 +296,19 @@ class OpenAIResponsesAgent:
                         for c in item.get("content") or []:
                             if c.get("type") == "output_text":
                                 text += str(c.get("text", ""))
+            target = target_size_for(message, image_model=str(conn.config.get("image_model") or ""))
             for item in final.get("output") or []:
                 if item.get("type") == "image_generation_call" and item.get("result"):
                     fmt = str(item.get("output_format") or "png").lower()
                     ext = "jpg" if fmt == "jpeg" else fmt
+                    stem = (
+                        f"{conn.agent_slug}-{target.slug}"
+                        if target
+                        else f"{conn.agent_slug}-{uuid.uuid4().hex[:8]}"
+                    )
                     produced.append(
                         ProducedFile(
-                            filename=f"{conn.agent_slug}-{uuid.uuid4().hex[:8]}.{ext}",
+                            filename=f"{stem}.{ext}",
                             content=base64.b64decode(item["result"]),
                             mime_type=f"image/{fmt}",
                             artifact_type="image",
@@ -297,6 +322,9 @@ class OpenAIResponsesAgent:
                     )
         if warnings:
             usage["warnings"] = warnings
+        if produced and not text.strip():
+            # the model answered with an image only: a normalized result still needs a line of text (§8)
+            text = f"Completed the {target.ratio} adaptation." if target else "Completed the image."
         return AgentReply(text=text, session_id=new_session, files=produced, usage=usage, status=200)
 
     @staticmethod

@@ -964,6 +964,14 @@ async def set_agent_runtime(
         for k, v in dict(data.native_config).items()
         if "key" not in k.lower() and "secret" not in k.lower()
     }
+    previous = agent.native_config or {}
+    if "last_test" not in cfg and previous.get("last_test"):
+        # the form never sends the test record back; it stays valid unless the runtime itself changed
+        unchanged = all(
+            previous.get(k) == cfg.get(k) for k in ("model", "instructions", "image_model", "api_base")
+        )
+        if unchanged and not data.native_api_key:
+            cfg["last_test"] = previous["last_test"]
     agent.native_config = cfg
     if data.clear_native_api_key and agent.native_api_key_secret_ref_id:
         await adapters.secrets.delete(str(agent.native_api_key_secret_ref_id))

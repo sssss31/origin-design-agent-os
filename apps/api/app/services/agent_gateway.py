@@ -81,7 +81,12 @@ async def _reveal(adapters: Adapters, ref: uuid.UUID | None, agent: Agent) -> st
 
 
 async def native_connection(agent: Agent, adapters: Adapters) -> AgentConnection:
-    """The Origin Native runtime for this agent (its own instructions/model/key), whatever the mode."""
+    """The Origin-controlled runtime for this agent, whatever the mode.
+
+    Execution brief §20: this is NOT the ChatGPT Workspace Agent instance. It is Origin's own Responses
+    API runtime configured with the agent's instructions, model and image settings, so that Origin
+    receives the output. The Workspace trigger stays available as legacy behaviour
+    (execution_mode = workspace_trigger)."""
     cfg = dict(agent.native_config or {})
     return AgentConnection(
         agent_slug=agent.slug,

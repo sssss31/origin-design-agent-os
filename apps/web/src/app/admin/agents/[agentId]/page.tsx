@@ -164,8 +164,31 @@ function RuntimeTab({ agent, mutate }: { agent: AgentOut; mutate: (fn: () => Pro
     }
   };
   const nativeReady = (rt?.native_configured || key.trim().length > 0) && Boolean(config.model || config.prompt_id);
+  const lastTest = (rt?.native_config.last_test as { ok?: boolean; at?: string; images?: number } | undefined) ?? null;
+  const summary: { label: string; value: string; ok: boolean }[] = [
+    { label: "Runtime", value: rt?.execution_mode === "origin_native" ? "Origin Native" : "Workspace Trigger (legacy)", ok: rt?.execution_mode === "origin_native" },
+    { label: "Model", value: str("model") || "not set", ok: Boolean(str("model")) },
+    { label: "Image model", value: str("image_model") || "API default", ok: true },
+    { label: "Instructions", value: str("instructions").trim() ? "Configured" : "Missing", ok: Boolean(str("instructions").trim()) },
+    { label: "API credential", value: rt?.native_configured ? "Configured" : "Missing", ok: Boolean(rt?.native_configured) },
+    { label: "Image input", value: "Enabled", ok: true },
+    { label: "Image generation", value: imageGen ? "Enabled" : "Disabled", ok: imageGen },
+    { label: "Status", value: lastTest?.ok ? `Ready · tested ${new Date(lastTest.at ?? "").toLocaleString()}` : nativeReady ? "Configured — run Test Runtime" : "Not configured", ok: Boolean(lastTest?.ok) },
+  ];
   return (
     <div className="space-y-3">
+      <Card>
+        <CardTitle>Origin-controlled runtime</CardTitle>
+        <p className="mb-2 text-xs text-muted">This is Origin&apos;s own runtime (OpenAI Responses API) configured with {agent.name}&apos;s instructions, model and image settings so Origin receives the output. It is not the ChatGPT Workspace Agent instance itself; that stays available as the legacy Workspace Trigger.</p>
+        <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          {summary.map((row) => (
+            <div key={row.label} className="flex items-center justify-between gap-3 border-b border-border/60 py-1">
+              <dt className="text-muted">{row.label}</dt>
+              <dd className={`text-right ${row.ok ? "" : "text-warning"}`}>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </Card>
       <Card>
         <CardTitle>Execution mode</CardTitle>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -195,23 +218,39 @@ function RuntimeTab({ agent, mutate }: { agent: AgentOut; mutate: (fn: () => Pro
               <Textarea rows={8} value={str("instructions")} placeholder="You are Resize2. Given a design and a target ratio…" onChange={(e) => set("instructions", e.target.value)} />
             </Field>
           </div>
+          <Field label="Image model" hint="gpt-image-2.5-sunburst (precise editing, recommended for resizes) · gpt-image-2.5-flare (fast) · gpt-image-2 · gpt-image-1.5">
+            <Input value={str("image_model")} placeholder="gpt-image-2.5-sunburst" onChange={(e) => set("image_model", e.target.value)} />
+          </Field>
+          <Field label="Image action" hint="auto lets the model edit the source image or generate; edit forces an edit of the attached image">
+            <select className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" value={str("image_action") || "auto"} onChange={(e) => set("image_action", e.target.value === "auto" ? null : e.target.value)}>
+              <option value="auto">auto</option>
+              <option value="edit">edit</option>
+              <option value="generate">generate</option>
+            </select>
+          </Field>
+          <Field label="Image quality" hint="high is a good default for design work; xhigh/max only on gpt-image-2.5">
+            <select className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" value={str("image_quality") || "auto"} onChange={(e) => set("image_quality", e.target.value === "auto" ? null : e.target.value)}>
+              {["auto", "low", "medium", "high", "xhigh", "max"].map((q) => <option key={q} value={q}>{q}</option>)}
+            </select>
+          </Field>
+          <Field label="Output size" hint="Chosen from the request (16:9 → landscape, 4:5 → portrait, square …). Pin a size below only to override that."><p className="py-2 text-sm">From the requested ratio</p></Field>
           <Field label="Image input" hint="Attached images are sent to the model as input"><p className="py-2 text-sm">ON</p></Field>
           <Field label="Image generation" hint="Built-in image_generation tool; renders stream into the chat as they form">
             <label className="flex items-center gap-2 py-2 text-sm"><input type="checkbox" checked={imageGen} onChange={(e) => set("image_generation", e.target.checked ? null : false)} /> {imageGen ? "ON" : "OFF"}</label>
           </Field>
-          <Field label="Image size (optional)" hint="e.g. 1024x1536, 1536x1024, auto"><Input value={String((config.image_options as Record<string, unknown> | undefined)?.size ?? "")} placeholder="auto" onChange={(e) => { const opts = { ...((config.image_options as Record<string, unknown>) ?? {}) }; if (e.target.value) opts.size = e.target.value; else delete opts.size; set("image_options", Object.keys(opts).length ? opts : null); }} /></Field>
-          <Field label="Image quality (optional)" hint="low · medium · high · auto"><Input value={String((config.image_options as Record<string, unknown> | undefined)?.quality ?? "")} placeholder="auto" onChange={(e) => { const opts = { ...((config.image_options as Record<string, unknown>) ?? {}) }; if (e.target.value) opts.quality = e.target.value; else delete opts.quality; set("image_options", Object.keys(opts).length ? opts : null); }} /></Field>
+          <Field label="Pinned size (optional)" hint="e.g. 1792x1008 — overrides the ratio-based size for every request"><Input value={String((config.image_options as Record<string, unknown> | undefined)?.size ?? "")} placeholder="auto" onChange={(e) => { const opts = { ...((config.image_options as Record<string, unknown>) ?? {}) }; if (e.target.value) opts.size = e.target.value; else delete opts.size; set("image_options", Object.keys(opts).length ? opts : null); }} /></Field>
+
         </div>
       </Card>
       <Card>
-        <CardTitle>Test Native Agent</CardTitle>
-        <p className="mb-2 text-xs text-muted">Runs the native runtime once with an optional image. The actual image appears below — nothing is written to a chat. Switch to Origin Native only after this looks right.</p>
+        <CardTitle>Test Runtime</CardTitle>
+        <p className="mb-2 text-xs text-muted">Runs the Origin-controlled runtime once with an optional image. Success means the actual generated image appears below — not a link, not &quot;completed&quot;. Nothing is written to a chat. Switch to Origin Native only after this looks right.</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Prompt"><Input value={prompt} onChange={(e) => setPrompt(e.target.value)} /></Field>
           <Field label="Image (optional)"><input type="file" accept="image/*" className="block w-full text-xs text-muted" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
         </div>
         <div className="mt-3 flex items-center gap-2">
-          <Button variant="secondary" disabled={busy !== null || !nativeReady} onClick={() => void runTest()}>{busy === "test" ? "Running…" : "Test Native Agent"}</Button>
+          <Button variant="secondary" disabled={busy !== null || !nativeReady} onClick={() => void runTest()}>{busy === "test" ? "Running…" : "Test Runtime"}</Button>
           {!nativeReady ? <span className="text-xs text-muted">Add a model and an API key first.</span> : null}
         </div>
         {testError ? <ErrorText>{testError}</ErrorText> : null}

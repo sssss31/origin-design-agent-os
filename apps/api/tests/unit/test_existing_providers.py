@@ -322,7 +322,7 @@ async def test_openai_responses_streams_partial_images_and_enables_the_image_too
         on_preview=on_preview,
     )
     tools = seen["body"]["tools"]
-    assert tools == [{"type": "image_generation", "partial_images": 2}]
+    assert tools == [{"type": "image_generation", "partial_images": 2, "size": "1024x1536"}]  # "make it 4:5" → portrait
     assert seen["body"]["input"][-1]["content"][1]["type"] == "input_image"
     assert "Generating image…\n" in deltas and deltas.count("Generating image…\n") == 1
     assert [p.metadata["index"] for p in previews] == [0, 1] and previews[0].metadata["item_id"] == "ig_1"
@@ -348,6 +348,28 @@ async def test_openai_responses_streams_partial_images_and_enables_the_image_too
     assert body["tools"] == [
         {"type": "image_generation", "partial_images": 3, "size": "1024x1536", "quality": "high"}
     ]
+    # Resize2 configuration (brief §2/§5): image model, edit/generate action, quality, size from the request
+    conn.config = {
+        "model": "gpt-5",
+        "image_model": "gpt-image-2.5-sunburst",
+        "image_action": "auto",
+        "image_quality": "high",
+    }
+    body, _ = provider._body(conn, "resize 16:9", history=[], files=[], session_id=None)
+    assert body["tools"] == [
+        {
+            "type": "image_generation",
+            "partial_images": 2,
+            "model": "gpt-image-2.5-sunburst",
+            "action": "auto",
+            "quality": "high",
+            "size": "1792x1008",
+        }
+    ]
+    # an admin-pinned size wins over the request
+    conn.config["image_options"] = {"size": "1024x1024"}
+    body, _ = provider._body(conn, "resize 16:9", history=[], files=[], session_id=None)
+    assert body["tools"][0]["size"] == "1024x1024"
 
 
 def test_openai_responses_sends_agent_instructions() -> None:
@@ -365,3 +387,46 @@ def test_openai_responses_sends_agent_instructions() -> None:
     conn.config = {"model": "gpt-5", "instructions": "   "}
     body, _ = provider._body(conn, "x", history=[], files=[], session_id=None)
     assert "instructions" not in body
+
+
+async def test_image_only_reply_gets_text_and_ratio_filename() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        events = [
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": "resp_2",
+                    "usage": {},
+                    "output": [
+                        {
+                            "type": "image_generation_call",
+                            "id": "ig_2",
+                            "result": "aGVsbG8=",
+                            "output_format": "png",
+                        }
+                    ],
+                },
+            }
+        ]
+        return httpx.Response(200, content=_sse(events), headers={"content-type": "text/event-stream"})
+
+    provider = OpenAIResponsesAgent(transport=httpx.MockTransport(handler))
+    conn = AgentConnection(
+        "resize2",
+        "Resize2",
+        "openai_responses",
+        None,
+        "sk-test",
+        {"model": "gpt-5", "image_model": "gpt-image-2.5-sunburst"},
+    )
+    reply = await provider.send_message(
+        conn,
+        "resize 16:9",
+        history=[],
+        files=[],
+        session_id=None,
+        conversation_id="c",
+        on_delta=await _collect([]),
+    )
+    assert reply.text == "Completed the 16:9 adaptation."
+    assert reply.files[0].filename == "resize2-16x9.png" and reply.files[0].mime_type == "image/png"

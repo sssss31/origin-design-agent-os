@@ -44,3 +44,22 @@ follow-up context, persistence), `tests/api/test_image_previews.py`.
    ratio, brand consistency. Adjust instructions / image options until acceptable.
 4. Select **Origin Native** → Save. From then on `/resize2` answers inside Origin. Workspace Trigger remains
    selectable as a fallback. Other agents stay as they are until each passes the same test.
+
+## Final Resize2 runtime (brief: "Origin-native execution architecture")
+
+- **Not the Workspace instance.** `native_connection()` builds Origin's own Responses API runtime from the
+  agent's server-side configuration (`agents.native_config`: `instructions`, `model`, `image_model`,
+  `image_action`, `image_quality`, optional pinned `image_options.size`; the key in `secret_refs`).
+  The Workspace trigger remains as legacy `execution_mode = workspace_trigger`.
+- **Source image**: uploaded to Origin storage, read back server-side and sent as `input_image`
+  (base64 data URL) — never only the filename.
+- **Real dimensions** (`app/domain/image_sizes.py`): the request's ratio/words/pixels pick the tool `size`:
+  gpt-image-2.x → multiples of 16 within 1:3…3:1 (16:9 → 1792x1008, 4:5 → 1200x1504, 1:1 → 1344x1344,
+  9:16 → 1008x1792); older image models → 1536x1024 / 1024x1536 / 1024x1024. An admin-pinned size wins.
+- **Receive → store → return**: `image_generation_call.result` is decoded server-side, stored as an
+  artifact (width/height sniffed), `conversations.current_artifact_id` updated, the reply carries
+  `result_type = native_result`, `provider_response_id`, the artifact attachments; an image-only reply gets
+  the line "Completed the 16:9 adaptation." and the file is named `<agent>-16x9.png`.
+- **Multi-turn**: `previous_response_id` + the current artifact as `input_image` + the new request.
+- **Admin → Runtime**: status summary (Runtime, Model, Image model, Instructions, API credential, Image
+  input, Image generation, Status: Ready after a successful **Test Runtime**), the key is write-only.

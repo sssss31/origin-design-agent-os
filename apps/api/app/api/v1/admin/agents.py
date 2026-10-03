@@ -215,6 +215,11 @@ async def test_native(
             error_code="agent_timeout",
             error_message="The native runtime did not answer in time.",
         )
+    agent.native_config = {
+        **(agent.native_config or {}),
+        "last_test": {"ok": True, "at": datetime.now(UTC).isoformat(), "images": len(reply.files)},
+    }
+    await session.flush()
     await svc._audit("agent.native_tested", agent.id, after={"ok": True, "images": len(reply.files)})
     return NativeTestOut(
         ok=True,
